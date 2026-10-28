@@ -91,6 +91,21 @@ function collectTexts(node, out = []) {
   return out
 }
 
+
+// 结构断言用：收集带某个 prop 的节点（例如 role="switch" 的开关）
+function collectNodesByProp(node, key, out = []) {
+  if (node == null || typeof node === 'boolean') return out
+  if (Array.isArray(node)) { for (const child of node) collectNodesByProp(child, key, out); return out }
+  if (typeof node !== 'object') return out
+  if (typeof node.type === 'function') {
+    try { return collectNodesByProp(node.type(node.props || {}), key, out) } catch { return out }
+  }
+  const props = node.props || {}
+  if (props[key] !== undefined) out.push(node)
+  if (props.children !== undefined) collectNodesByProp(props.children, key, out)
+  return out
+}
+
 // ── 注册 ────────────────────────────────────────────────
 const registrations = []
 const injections = []
@@ -136,6 +151,13 @@ const snapshot = {
   problems: { lost: [{ name: 'x' }], unsupported: [], missing: [], failed: [] },
 }
 
+/** 只要渲染树本身（结构断言用；render 返回的是文本数组）。 */
+function tree(hookValues) {
+  hookQueue = hookValues
+  hookIndex = 0
+  return mainReg.Component({})
+}
+
 function render(hookValues) {
   // 钩子顺序：tab / data / error / busy / expanded / activeWs / addText / addError
   hookQueue = hookValues
@@ -174,9 +196,13 @@ check('自定义填入标题', t3.includes('自定义填入'), true)
 check('自定义填入按钮', t3.includes('解析并添加'), true)
 check('服务器行', t3.includes('exa'), true)
 check('工具展开按钮', t3.some((t) => t.startsWith('工具 ')), true)
+const mcpTreeSwitches = collectNodesByProp(tree(['mcps', S, null, null, {}, null, '', null]), 'role')
+  .filter((n) => n.props.role === 'switch').length
 check('CC 作用域 pill', t3.includes('CC 用户'), true)
 check('延迟服务器 pill', t3.includes('延迟'), true)
 check('延迟说明文案', t3.some((t) => t.includes('不进提示词，可按需搜索调用')), true)
+check('每台服务器都有开关', mcpTreeSwitches >= S.mcp.servers.length, true)
+check('延迟按钮在（可切成本策略）', t3.includes('延迟中'), true)
 check('CC 未批准 pill', t3.includes('CC 未批准'), true)
 check('CC 已拒绝 pill', t3.includes('CC 已拒绝'), true)
 
