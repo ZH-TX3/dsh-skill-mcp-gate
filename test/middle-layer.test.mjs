@@ -39,6 +39,7 @@ function check(label, actual, expected) {
 }
 
 const listeners = new Map()
+const eventCounts = {}
 const registered = []
 const dispatches = []
 const routes = []
@@ -59,7 +60,7 @@ const ctx = {
   webServer: { register: (route) => { routes.push(route); return () => {} } },
   agents: { list: () => [] },
   workspaceRegistry: { list: () => [{ path: ws, title: 'demo' }] },
-  on: (event, fn) => { listeners.set(event, fn); return () => {} },
+  on: (event, fn) => { eventCounts[event] = (eventCounts[event] ?? 0) + 1; listeners.set(event, fn); return () => {} },
   effect: (factory) => factory(),
 }
 
@@ -67,6 +68,12 @@ apply(ctx, { projectDir: ws, ccHome: home })
 await new Promise((r) => setTimeout(r, 80))
 
 console.log('注册')
+{
+  // 目录门禁与 rules 注入都挂在 agent/pre-step 上，装配过滤器与 rules 各自挂自己的事件
+  check('agent/pre-step 有两个监听（目录门禁 + rules）', eventCounts['agent/pre-step'], 2)
+  check('tools/result 有 rules 监听', eventCounts['tools/result'], 1)
+  check('system-prompt/assemble 有装配过滤器', eventCounts['system-prompt/assemble'], 1)
+}
 {
   check('中间层两个工具已注册', registered.map((t) => t.name).sort(), ['gate_mcp_call', 'gate_mcp_search'])
   check('参数是 JSON Schema', registered.every((tool) => tool.parameters.type === 'object'), true)

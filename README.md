@@ -44,6 +44,32 @@ MCP 工具常驻提示词是最大的固定开销。把服务器设为 `deferred
 - 嵌套结果只转发文本；图片/音视频等非文本块会在结尾写明 `[未转发的非文本内容：image×2]`
 - **不新增依赖**：手写 `ToolDefinition`，不去 import 解析不到的 `defineTool`
 
+## 把 CC 的 `rules/` 迁过来（路径门控）
+
+Claude Code 的 `.claude/rules/**/*.md` 支持 `paths:` 前置元数据：规则只在读写命中文件时才进上下文。
+`dsh-agent-instructions` 明确不解析这个目录，所以由本插件补：
+
+- **发现**：`~/.claude/rules/`（用户级）+ `<工作区>/.claude/rules/`（项目级），递归 `.md`
+- **无条件规则**（没有 `paths`）：第一步就注入
+- **路径规则**：成功的 `read` / `write` / `edit` 之后记录被触碰的文件，命中 `paths` 才注入
+- **每条规则只注入一次**（会话级），不重复占上下文
+- **预算**：`ccRulesMaxBytes`（默认 8192 字节）；放不下的规则跳过，并在消息里点名，同时给一条一次性提示，不静默
+
+```jsonc
+{ "ccRules": true, "ccRulesMaxBytes": 8192 }
+```
+
+`paths` 支持 CC 的写法：YAML 列表或逗号分隔字符串，glob 含 `**` / `*` / `?` / `{a,b}`。
+不带 `/` 的模式额外按文件名匹配（写 `*.md` 就是「所有层级的 md」）。
+展开受 CC 同款预算约束（1000 个模式 / 4 MiB）。
+
+**与 CC 的两处差别**（如实说明，不假装等价）：
+
+| CC | 本插件 |
+|---|---|
+| `cat`/`head` 这类 Bash 读取也算触碰 | 只认结构化的 `read`/`write`/`edit`；shell 语法不可靠，不解析（与 `dsh-agent-instructions` 同一取舍） |
+| 规则加载后留在上下文 | 每条只注入一次；上下文被压缩后不会再补（要补就 `/gate` 之外重启会话） |
+
 ## 架构
 
 ```
@@ -56,6 +82,7 @@ lib/
     skills.js         frontmatter 字段表、目录扫描、skillOverrides 解析
     mcp.js            三处 MCP 定义源 + 批准/拒绝语义
     listing.js        目录预算两个设置键的读取与换算
+    rules.js          `.claude/rules` 发现 + frontmatter 解析 + 花括号展开
     usage.js          skillUsage（预算丢弃顺序用）
   core/               纯领域，不认识任何文件名
     policy.js         四档词汇、校验、分层合并
@@ -66,6 +93,7 @@ lib/
     mcp-filter.js     system-prompt/assemble 过滤工具
     provider.js       额外 skill provider（把 .claude/skills 接进目录）
     observe.js        只读地看 DSH 现状（agents / 工作区 / 工具 / skill）
+    rules-injector.js tools/result 记触碰 + agent/pre-step 注入规则
   host/               对外表面
     snapshot.js       面板数据、commands.js `/gate`、routes.js Web API
 ```
@@ -236,7 +264,7 @@ cd ~/.dsh/plugins/dsh-skill-mcp-gate
 npm test
 ```
 
-十三个套件，零依赖，不启动 DSH：
+十五个套件，零依赖，不启动 DSH：
 
 | 测试 | 覆盖 |
 |---|---|
@@ -248,6 +276,8 @@ npm test
 | `claude-mcp.test.mjs` | CC 的 user / local / project 三作用域、路径归一化、批准与拒绝优先级、基线层 |
 | `listing.test.mjs` | 目录预算：隐藏/只留名字、超预算丢描述、按使用次数排序、预算来源解析 |
 | `gate-tools.test.mjs` | 中间层：检索打分、名字解析、拒绝规则、嵌套 dispatch 的身份与取消、结果降级 |
+| `rules.test.mjs` | CC rules：frontmatter（列表/逗号/缺失/坏掉）、花括号展开与预算、glob 语义、注入规划 |
+| `rules-inject.test.mjs` | rules 注入：无条件先注入、触碰后按 paths 注入、不重复、失败/取消的触碰不算、预算提示 |
 | `middle-layer.test.mjs` | 端到端（假 ctx）：真跑 apply + 装配 waterfall → 索引 → 搜索 → 调用 → 嵌套派发 |
 | `scope.test.mjs` | 工作区作用域列表与写层选择 |
 | `wiring.test.mjs` | 假 ctx：真跑一次 `system-prompt/assemble` waterfall 验证过滤；命令面 + 路由 + token 鉴权 + 落盘 |

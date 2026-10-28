@@ -966,3 +966,73 @@ ctx.tools.execute({
 
 这条不是本插件特有 —— 任何在 Windows 上做「临时文件 + rename」的插件都会撞，
 所以这里记一笔，别在下次重构时又把重试删掉。
+
+## 21. v0.10.0 — C1：CC `rules/` 的路径门控
+
+### 21.1 为什么不是「读文件塞提示词」那么简单
+
+CC 的 `.claude/rules/` 不是一个目录，是一套**条件加载**协议：
+
+- 递归发现 `.md`
+- 无 `paths` 的规则启动即加载（优先级同 `.claude/CLAUDE.md`）
+- 有 `paths` 的规则，只在 Read / Write / Edit 命中匹配文件时才加载
+- `paths` 接受 YAML 列表或逗号分隔字符串；glob 支持 `**` / `*` / `?` / `{a,b}`
+- 展开预算 1000 个模式、4 MiB；不含花括号的模式不计入模式预算
+- frontmatter 解析失败 → 当作没有 `paths`（无条件加载）
+- `paths` 是唯一被读取的字段，frontmatter 在载入前剥掉
+
+`dsh-agent-instructions` 的 Deferred Work 明确写了「不解释 `.claude/rules/`、`@path` import」，
+所以这块只能自己补。
+
+### 21.2 分层
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 位置 | `lib/paths.js` | `claudeRulesDirs(cwd, home)`，用户级在前、项目级在后 |
+| CC 知识 | `lib/cc/rules.js` | 递归发现、`paths` 解析、花括号展开与预算 |
+| 纯逻辑 | `lib/core/rules.js` | glob 编译、相对化、命中判定、注入规划、文本渲染 |
+| DSH 接缝 | `lib/platform/rules-injector.js` | `tools/result` 记触碰 + `agent/pre-step` 注入消息 |
+
+`core/rules.js` 里没有 `claude`、没有 `fs`、没有 `ctx`，可直接单测（`test/rules.test.mjs`）。
+
+### 21.3 为什么用 `agent/pre-step` 而不是 `system-prompt/assemble`
+
+`AssembleContext` 只有 `{ scope, signal }`，**没有 agent** —— 拿不到「这个会话碰过哪些文件」，
+而这正是路径门控的全部输入。`agent/pre-step` 的 payload 有 `agent`，能读
+`agent.session.header.cwd`，也能用 `WeakMap` 按 agent 存会话态（触碰集合 + 已注入集合）。
+
+代价：注入的是一条 **user 消息**，不是系统提示的一段。消息只手写
+`{ id: randomUUID(), role: 'user', content, source }`，与 `createMessage` 等价，
+不需要 import `@deepseek-ai/dsh-llm`（本地路径插件解析不到）。
+
+### 21.4 会话态与去重
+
+- `WeakMap<agent, { touched:Set, injected:Set, budgetNoticed:boolean }>` —— agent 回收即释放
+- 触碰集合上限 500 条，防长会话无限增长
+- `injected` 保证每条规则只注入一次；**不做**「压缩后自动补发」（CC 也不会）
+- 发现结果按 cwd 缓存 30s（`invalidate()` 可强制清）
+
+### 21.5 预算与失败模式
+
+`ccRulesMaxBytes`（默认 8192）：
+
+- 放得下的注入，放不下的进 `skipped`，在注入消息末尾点名
+- **一条都放不下时**，仍然发一条只含省略说明的消息，并且只发一次（`budgetNoticed`）。
+  静默丢弃是这里最坏的失败模式：用户会以为规则生效了
+- 发现阶段的读错误进 `warnings`（日志），注入期异常进 `status().errors`，`/gate doctor` 可见
+
+### 21.6 与 CC 的两处已知差别
+
+1. **Bash 读取不算触碰**。CC 把 `cat`/`head` 单文件也算 Read；本插件只认结构化工具。
+   理由与 `dsh-agent-instructions` 相同：shell 语法与每次调用的 shell 状态不是可靠的 fs 接缝，
+   猜错的代价是「规则莫名不生效」。
+2. **规则不跨压缩存活**。CC 加载后留在上下文里；本插件每条只注入一次。
+
+### 21.7 验证
+
+- `test/rules.test.mjs`：frontmatter 四种形态、花括号乘算、预算计数（不含花括号不吃预算）、
+  glob 语义（`**` 跨层与零层、`*` 不跨层、`?`、大小写、反斜杠模式、文件名回退）、
+  注入规划（无条件优先、去重、预算跳过、项目外触碰不触发）
+- `test/rules-inject.test.mjs`：首轮只注入无条件、第二轮不重复、触碰后按 paths 注入、
+  失败/其它工具/已取消的触碰都不算、预算提示只发一次、关闭开关、无 agent 直通、reject 直通
+- `middle-layer.test.mjs` 追加事件计数断言：`agent/pre-step` 必须有两个监听（目录门禁 + rules）

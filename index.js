@@ -24,6 +24,7 @@ import { createSkillProvider } from './lib/platform/provider.js'
 import { createCatalogGate } from './lib/platform/catalog.js'
 import { createMcpFilter } from './lib/platform/mcp-filter.js'
 import { createGateTools } from './lib/platform/gate-tools.js'
+import { createRulesInjector } from './lib/platform/rules-injector.js'
 import { createSnapshotter } from './lib/host/snapshot.js'
 import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
@@ -108,10 +109,24 @@ export function apply(ctx, config = {}) {
       log,
     })
 
+  // CC 的 rules/：按 touched paths 做路径门控注入
+  const rulesInjector = config.ccRules === false
+    ? null
+    : createRulesInjector({
+      ctx,
+      getOptions: () => ({
+        enabled: config.ccRules !== false,
+        maxBytes: config.ccRulesMaxBytes ?? 8192,
+        home: config.ccHome,
+      }),
+      log,
+    })
+
   const status = () => ({
     catalog: catalogGate.status(),
     mcp: mcpFilter.status(),
     tools: gateTools ? gateTools.status() : { errors: [], disabled: true },
+    rules: rulesInjector ? rulesInjector.status() : { disabled: true, injected: 0, last: [], errors: [] },
   })
   const snapshot = createSnapshotter({
     ctx,
@@ -222,6 +237,7 @@ export function apply(ctx, config = {}) {
   })
   const routeDisposers = routes.map((route) => ctx.webServer.register(route))
 
+  rulesInjector?.install()
   gateTools?.install()
   mcpFilter.install()
   catalogGate.install()
@@ -231,5 +247,6 @@ export function apply(ctx, config = {}) {
     catalogGate.dispose()
     mcpFilter.dispose()
     gateTools?.dispose()
+    rulesInjector?.dispose()
   }, 'skill-mcp-gate: cleanup')
 }
