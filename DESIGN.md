@@ -950,3 +950,19 @@ ctx.tools.execute({
 
 注册是常驻的，但装配过滤器会在**没有任何 `deferred` 服务器**时把 `gate_mcp_search` /
 `gate_mcp_call` 自己从 `assembly.tools` 里摘掉 —— 不用的功能不占一个 token 的工具位。
+
+## 20. v0.9.1 — Windows rename 的偶发 EPERM
+
+**现象**：全套测试约 1/20 概率挂掉，栈顶固定是 `renameSync` 抛 `EPERM`，写的是临时目录里的 JSON。
+手工压测确认：`node test/store.test.mjs` 连跑 30 次，第 22 次失败。
+
+**根因**：Windows 上 rename 覆盖已存在文件时，若目标正被杀毒/索引服务短暂持有，
+会返回 `EPERM`/`EBUSY`/`EACCES` 而不是重试。这不是代码逻辑错，是平台行为。
+
+**处理**：`lib/io.js` 的原子写加退避重试（10/25/50/100/200/400ms，共约 0.8s），
+非这一类错误码直接抛，重试用尽也抛，并把临时文件删掉不留垃圾。
+
+**证据**：改前 30 次里 1 次失败；改后 40 次 0 次。
+
+这条不是本插件特有 —— 任何在 Windows 上做「临时文件 + rename」的插件都会撞，
+所以这里记一笔，别在下次重构时又把重试删掉。
