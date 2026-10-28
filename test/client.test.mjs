@@ -142,6 +142,9 @@ const snapshot = {
       { name: 'loose', state: 'on', connected: true, layer: null, file: null, tools: [{ name: 'ping', state: 'on', hidden: false }] },
       { name: 'cc-proj', state: 'on', connected: false, layer: 'cc', file: 'c.json', ccScope: 'project', ccRejected: false, ccApproved: false, tools: [] },
       { name: 'lazy-srv', state: 'deferred', connected: true, layer: 'global', file: 'g.json', ccScope: null, ccRejected: false, ccApproved: null, tools: [{ name: 'scan', state: 'on', hidden: true }] },
+      { name: 'proj-mcp2', state: 'on', connected: true, layer: 'project', file: 'p.json', ccScope: 'local', ccRejected: false, ccApproved: true, tools: [] },
+      { name: 'cc-only', state: 'on', connected: false, layer: 'cc', file: 'c.json', ccScope: 'project', ccRejected: false, ccApproved: false, tools: [] },
+      { name: 'ghost', state: 'on', connected: false, layer: null, file: null, tools: [] },
       { name: 'cc-off', state: 'off', connected: false, layer: 'cc', file: 'c.json', ccScope: 'user', ccRejected: true, ccApproved: false, tools: [] },
     ],
   },
@@ -202,6 +205,11 @@ check('CC 作用域 pill', t3.includes('CC 用户'), true)
 check('延迟服务器 pill', t3.includes('延迟'), true)
 check('延迟说明文案', t3.some((t) => t.includes('不进提示词，可按需搜索调用')), true)
 check('每台服务器都有开关', mcpTreeSwitches >= S.mcp.servers.length, true)
+check('全局层 tag', t3.includes('全局'), true)
+check('项目层 tag', t3.includes('项目'), true)
+check('未声明 tag', t3.includes('未声明'), true)
+check('CC 本地 tag', t3.includes('CC 本地'), true)
+check('CC 项目 tag（layer=cc 时不重复标全局/项目）', t3.includes('CC 项目'), true)
 check('延迟按钮在（可切成本策略）', t3.includes('延迟中'), true)
 check('CC 未批准 pill', t3.includes('CC 未批准'), true)
 check('CC 已拒绝 pill', t3.includes('CC 已拒绝'), true)

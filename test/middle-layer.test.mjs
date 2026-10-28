@@ -22,6 +22,11 @@ writeFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), JSON.stringify({
   mcp: { servers: { exa: 'deferred', ctx7: 'off' } },
 }), 'utf8')
 
+// CC 侧：user 作用域声明了 exa，并且在 CC 里被拒绝（settings 的 disabledMcpjsonServers）
+writeFileSync(join(home, '.claude.json'), JSON.stringify({ mcpServers: { exa: { command: 'npx' } } }), 'utf8')
+mkdirSync(join(home, '.claude'), { recursive: true })
+writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ disabledMcpjsonServers: ['exa'] }), 'utf8')
+
 const { apply } = await import('../index.js')
 
 let failures = 0
@@ -58,7 +63,7 @@ const ctx = {
   effect: (factory) => factory(),
 }
 
-apply(ctx, { projectDir: ws })
+apply(ctx, { projectDir: ws, ccHome: home })
 await new Promise((r) => setTimeout(r, 80))
 
 console.log('注册')
@@ -111,6 +116,24 @@ console.log('\n关闭的服务器不可调用')
   const refused = await call.execute({ name: 'ctx7.resolve' }, { callId: 'c2' })
   check('拒绝并说明原因', [refused.ok, refused.text.includes('已被关闭')], [false, true])
   check('没有真的派发', dispatches.length, 1)
+  const offAgain = await registered.find((t) => t.name === 'gate_mcp_call')
+    .execute({ name: 'ctx7.resolve' }, { callId: 'c3' })
+  check('被 CC 拒绝且无本插件覆盖的服务器仍拒绝', offAgain.text.includes('已被关闭'), true)
+}
+
+console.log('\nCC 出处与状态的分工')
+{
+  const stateRoute = routes.find((r) => r.path.endsWith('/state'))
+  let body = null
+  await new Promise((resolve) => {
+    const res = { statusCode: 200, setHeader() {}, end(chunk) { body = JSON.parse(chunk); resolve() } }
+    stateRoute.handler({ method: 'GET', headers: {}, url: '/api/skill-mcp-gate/state' }, res)
+  })
+  const exa = body.mcp.servers.find((srv) => srv.name === 'exa')
+  check('本插件配置决定状态', exa.state, 'deferred')
+  check('保留 CC 作用域 tag', exa.ccScope, 'user')
+  check('保留 CC 的拒绝标记', exa.ccRejected, true)
+  check('层标为本插件项目层', exa.layer, 'project')
 }
 
 console.log('\n没有延迟服务器时中间层不占位')
