@@ -191,6 +191,16 @@ check('折叠时给出分组说明', t1.some((t) => t.includes('~/.claude/skills
 check('页脚统计', t1.some((t) => t.includes('个关闭')), true)
 check('技能行有「内容」按钮（可预览 + 手动调用）', t1.includes('内容'), true)
 
+console.log('host 没有内容接口时')
+{
+  const hooks = (flag) => ['skills', S, null, null, {}, null, '', null, {}, {}, null, {}, {}, {}, null, flag]
+  const hidden = render(hooks(false))
+  check('按钮不出现', hidden.includes('内容'), false)
+  check('页脚说明原因', hidden.some((t) => t.includes('重启 dsh web')), true)
+  const shown = render(hooks(true))
+  check('有接口时按钮出现', shown.includes('内容'), true)
+}
+
 console.log('Skills tab（全部展开）')
 const t1b = render(['skills', S, null, null, {}, null, '', null, {}, {}, null, {}, { user: false, builtin: false }])
 check('展开后用户技能可见', t1b.includes('karpathy-guidelines'), true)
