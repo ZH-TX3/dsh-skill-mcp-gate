@@ -2,7 +2,7 @@
 #
 # 装法：
 #   dsh plugin --profile web add <plugin-dir>
-#   （<plugin-dir> 即本插件目录，例如 ~/.dsh/plugins/dsh-skill-mcp-gate）
+#   （<plugin-dir> 即本插件目录，例如 D:/ds/dsh-plugins/dsh-skill-mcp-gate）
 #
 # M1 只做 skills 的 C 模式（runtime 影子覆盖 invocation）+ /gate 命令面。
 # 不改动任何现有行的组合，不修改用户的 SKILL.md。
