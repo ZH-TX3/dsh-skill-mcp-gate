@@ -33,15 +33,17 @@
 | 东西 | 存在哪 | 谁读 |
 |---|---|---|
 | **门禁状态**（`on` / `deferred` / `off`、逐工具开关） | 本插件配置 `mcp.servers` | 本插件（装配期过滤） |
-| **项目级连接定义**（transport / command / args / env / url / headers） | **`<工作区>/.mcp.json`**（Claude Code 同一个文件，CC 形状） | 本插件启动/切工作区时灌进 loader；CC 也读它 |
-| **全局连接定义** | 本插件全局配置 `mcp.definitions` | 同上 |
+| **连接定义**（transport / command / args / env / url / headers） | **本插件配置** `mcp.definitions`（项目 → `<ws>/.dsh/skill-mcp-gate.json`，全局 → `~/.dsh/skill-mcp-gate/settings.json`） | 本插件启动/切工作区时灌进 loader |
+| Claude Code 的 `~/.claude.json`、`<ws>/.mcp.json` | **只读**：读来用，绝不改写 | 本插件读它来发现服务器/定义 |
 | **探测结果** | 不存盘 | — |
 | **CC 的定义** | `~/.claude.json` / `<ws>/.mcp.json` | 只读，用来当编辑器初稿 |
 | **探测结果** | 不存盘、不缓存 | — |
 
-也就是说：**在项目里保存 → 写进 `<工作区>/.mcp.json`**（形状与 Claude Code 一致，两边共用一份）；
-**在「全局」作用域保存 → 写进本插件全局配置**。保存后立刻在运行期创建/更新 `mcp-client` 条目，
-重启时由插件重新灌入。**不改你的 profile**（实测 `loader.write()` 在这个 profile 下是静默失败的）。
+也就是说：**我们只写自己的 `skill-mcp-gate.json`**，Claude Code 的文件（`~/.claude.json`、
+`<ws>/.mcp.json`）一律**只读**。项目里的 `.mcp.json` 写了什么，本插件读来当成该项目的连接定义；
+你从面板保存的连接则落在 `skill-mcp-gate.json` 的 `mcp.definitions` 里。
+保存后立刻在运行期创建/更新 `mcp-client` 条目，重启时由插件重新灌入。
+**不改你的 profile**（实测 `loader.write()` 在这个 profile 下是静默失败的）。
 
 ### 只对当前项目生效
 

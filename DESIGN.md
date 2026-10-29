@@ -1498,3 +1498,55 @@ loader 用这个字符串去 **import 插件模块**，裸 `mcp-client` 解析�
 
 `npm test` 19 套件 615 项全绿（claude-mcp 的断言改成「.mcp.json 不进 CC 基线」，
 middle-layer 的插件名断言改成可解析包名）。
+
+## 33. v0.15.0 — 纠正：`.mcp.json` 是只读输入，不是我们的输出
+
+### 33.1 我搞错的地方
+
+v0.14.0 为了「和 Claude Code 共用同一个文件」，把面板保存的连接**写进了 `<ws>/.mcp.json`**。
+这是越界：那个文件是 Claude Code 的项目配置，本插件的原则一直是「只读别人的文件、只写自己的」。
+用户直接点出来了：`skill-mcp-gate.json` 才是本插件的文件，其它文件里的配置是**用来读的**。
+
+### 33.2 现在的模型
+
+| 文件 | 方向 | 用途 |
+|---|---|---|
+| `<ws>/.mcp.json` | **只读** | 该项目里 Claude Code 声明的 MCP；读来当项目定义用（含 `paths` 无关，纯连接信息） |
+| `~/.claude.json` | **只读** | CC 的用户级/本地级 MCP 声明 |
+| `<ws>/.dsh/skill-mcp-gate.json` | 读写 | 本插件的项目配置：门禁状态 + 面板里保存的连接定义 |
+| `~/.dsh/skill-mcp-gate/settings.json` | 读写 | 本插件的全局配置：同上 |
+| DSH profile | 不碰 | 连接靠运行期 `loader.create`，不落盘 profile |
+
+保存一律写 `skill-mcp-gate.json`。`.mcp.json` 里已有的定义照样会生效（`load.js` 读成项目定义），
+但**永远不会被我们改写**。
+
+### 33.3 只读来源的删除语义
+
+对 `.mcp.json` 里的服务器点「删除」时：
+
+- 清掉本地门禁记录 + 断开运行期连接
+- **落一条 `off`**（否则它会被默认 `on` 又拉回列表）
+- 回话说明「定义来自项目里的 .mcp.json，本插件只读不改；要彻底移除请改那个文件」
+
+`deleteDefinition` 对这类来源直接拒绝并给同样的指引。
+
+### 33.4 顺带删掉的东西
+
+`lib/cc/mcp-json.js`（写形状的 `toCcServer` / `withServer` / `withoutServer`）与它的测试一并删除 ——
+不再写就不需要写形状；`load.js` 内联读 `doc.mcpServers`。
+
+### 33.5 验证（真实实例）
+
+```
+iphone 工作区（定义在本插件配置里）
+  iostest(on, project)，运行期连接 active=["iostest"]
+  约 20s 后工具出现：mcp__iostest__resolve-library-id、mcp__iostest__query-docs（hidden=false）
+
+手写一个 .mcp.json 的工作区
+  fromcc(on, project) 出现；该文件 md5 前后一致（未被改写）；目录里没有新增文件
+
+切回 iphone
+  active=["iostest"]（fromcc 的运行期连接被回收）
+```
+
+`npm test` 19 套件 603 项全绿。

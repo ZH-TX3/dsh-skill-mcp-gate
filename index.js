@@ -37,9 +37,8 @@ import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
 import {
   addServerNames, readJsonFile, removeDefinition, removeServer, renameServer, setDefinition,
-  setServerState, setSkillState, setToolState, writeJsonFile,
+  setServerState, setSkillState, setToolState,
 } from './lib/io.js'
-import { withServer, withoutServer } from './lib/cc/mcp-json.js'
 
 export const name = 'skill-mcp-gate'
 
@@ -242,14 +241,26 @@ export function apply(ctx, config = {}) {
     }
     let configRemoved = 0
     if (entry && removeServer(entry.file, serverName)) configRemoved += 1
-    if (owned) {
+    let readOnlySource = null
+    if (owned && owned.source === 'mcp.json') {
+      // 定义来自项目的 .mcp.json —— 那是 Claude Code 的文件，我们只读不改。
+      // 所以「删除」退化为「停用」：清掉本地记录并落一条 off，免得又被默认 on 拉回来。
+      readOnlySource = owned.file
+      setServerState(writeTarget().file, serverName, 'off')
+      configRemoved += 1
+    } else if (owned) {
       const dropped = dropDefinitionEverywhere(serverName)
       configRemoved += dropped.length
     }
     const connectionRemoved = Boolean(connections.remove(serverName))
     reload(current.workspace)
     log('删除服务器', serverName, { configRemoved, connectionRemoved })
-    return { configRemoved, connectionRemoved, stillDeclaredByCc: Boolean(cc) }
+    return {
+      configRemoved,
+      connectionRemoved,
+      stillDeclaredByCc: Boolean(cc),
+      readOnlySource,
+    }
   }
 
   /** 改名要同时改门禁条目名、定义里的 serverName、以及运行期连接。 */
@@ -299,32 +310,19 @@ export function apply(ctx, config = {}) {
   }
 
   /**
-   * 定义写哪儿：
-   *   项目工作区 → `<ws>/.mcp.json`（与 Claude Code 共用同一个文件）
-   *   全局       → 本插件的全局配置 `mcp.definitions`
+   * 定义只写本插件自己的配置文件（全局 → `~/.dsh/skill-mcp-gate/settings.json`，
+   * 项目 → `<ws>/.dsh/skill-mcp-gate.json`）。
+   *
+   * `<ws>/.mcp.json` 是 **Claude Code 的项目配置，只读**：读来用，绝不改写。
    */
   function definitionTarget() {
-    const ws = current?.workspace
-    if (ws && ws !== GLOBAL_WS) {
-      return { ws, file: claudeMcpProjectFile(ws), kind: 'mcp.json' }
-    }
     const target = writeTarget()
     return { ws: target.ws, file: target.file, kind: 'plugin' }
   }
 
   /** 从所有可能的定义来源里删掉一条（.mcp.json + 本插件全局/项目配置）。 */
-  function dropDefinitionEverywhere(serverName, { includeMcpJson = true } = {}) {
+  function dropDefinitionEverywhere(serverName) {
     const files = []
-    const ws = current?.workspace
-    if (includeMcpJson && ws && ws !== GLOBAL_WS) {
-      const mcpFile = claudeMcpProjectFile(ws)
-      const doc = readJsonFile(mcpFile)
-      const next = doc ? withoutServer(doc, serverName) : undefined
-      if (next) {
-        writeJsonFile(mcpFile, next)
-        files.push(mcpFile)
-      }
-    }
     const candidates = [
       files.globalFile,
       current?.workspace && current.workspace !== GLOBAL_WS ? configPaths({ projectDir: current.workspace }).projectFile : null,
@@ -343,22 +341,8 @@ export function apply(ctx, config = {}) {
    */
   function writeDefinition(config, previousName) {
     const target = definitionTarget()
-    if (target.kind === 'mcp.json') {
-      const doc = readJsonFile(target.file) ?? {}
-      let next = withServer(doc, config.serverName, config)
-      if (previousName && previousName !== config.serverName) {
-        next = withoutServer(next, previousName) ?? next
-      }
-      writeJsonFile(target.file, next)
-      // 同一台服务器不要在本插件配置里再留一份（刚写的 .mcp.json 不能删）
-      dropDefinitionEverywhere(config.serverName, { includeMcpJson: false })
-      if (previousName && previousName !== config.serverName) {
-        dropDefinitionEverywhere(previousName, { includeMcpJson: false })
-      }
-    } else {
-      if (previousName && previousName !== config.serverName) removeDefinition(target.file, previousName)
-      setDefinition(target.file, config.serverName, config)
-    }
+    if (previousName && previousName !== config.serverName) removeDefinition(target.file, previousName)
+    setDefinition(target.file, config.serverName, config)
     return target
   }
 
@@ -405,6 +389,9 @@ export function apply(ctx, config = {}) {
   async function deleteDefinition(serverName) {
     const owned = current?.definitions?.get(serverName)
     if (!owned) throw new Error(`本插件里没有 "${serverName}" 的连接定义`)
+    if (owned.source === 'mcp.json') {
+      throw new Error(`"${serverName}" 的定义来自项目里的 .mcp.json（Claude Code 也读它），本插件只读不改。要停用它，把这一行的开关关掉即可。`)
+    }
     const filesRemovedFrom = dropDefinitionEverywhere(serverName)
     if (filesRemovedFrom.length === 0) throw new Error(`删除失败：没找到 "${serverName}" 的定义，可能已经被删掉了`)
     reload(current.workspace)

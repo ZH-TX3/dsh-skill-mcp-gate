@@ -4,7 +4,7 @@
  * 验证「延迟服务器 → 索引 → gate_mcp_search → gate_mcp_call → 嵌套 dispatch」整条链路。
  */
 
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -302,12 +302,10 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('快照标出插件代管', saved.body.state.mcp.connections.managed, ['ccOnly'])
   const ccOnlyRow = saved.body.state.mcp.servers.find((srv) => srv.name === 'ccOnly')
   check('只有定义也能在面板上看到（补门禁状态）', ccOnlyRow?.state, 'on')
-  check('写进项目级 .mcp.json', saved.body.kind, 'mcp.json')
-  const mcpJson = JSON.parse(readFileSync(join(ws, '.mcp.json'), 'utf8'))
-  check('用的是 Claude Code 的形状', mcpJson.mcpServers.ccOnly.type, 'http')
-  check('url 一致', mcpJson.mcpServers.ccOnly.url, 'http://127.0.0.1:1/mcp')
+  check('写进本插件自己的配置', saved.body.kind, 'plugin')
   const ownConfig = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
-  check('本插件配置里不再重复存一份', ownConfig.mcp?.definitions?.ccOnly, undefined)
+  check('定义落在 skill-mcp-gate.json', ownConfig.mcp.definitions.ccOnly.url, 'http://127.0.0.1:1/mcp')
+  check('没有擅自创建 .mcp.json', existsSync(join(ws, '.mcp.json')), false)
 
   const probeManaged = await callJson('/mcp/probe', { server: 'ccOnly' })
   check('探测优先用 DSH 配置（仍是 http）', probeManaged.body.probe.mode, 'http')
@@ -325,8 +323,8 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('删除连接成功', removedDef.body.ok, true)
   check('loader 条目清空', loaderEntries.size, 0)
   check('快照里不再代管', removedDef.body.state.mcp.connections.managed, [])
-  const afterDelete = JSON.parse(readFileSync(join(ws, '.mcp.json'), 'utf8'))
-  check('.mcp.json 里的定义也删掉了', afterDelete.mcpServers?.ccOnly, undefined)
+  const afterDelete = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
+  check('本插件配置里的定义删掉了', afterDelete.mcp?.definitions?.ccOnly, undefined)
 
   // 回归：只删门禁条目时，定义还在 → load 会把服务器又补回列表（看起来删不掉）
   const pastedForDelete = await callJson('/mcp/add', {
@@ -353,10 +351,9 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
     pasted.body.names.some((n) => ['transport', 'serverName', 'command', 'args'].includes(n)), false)
   check('定义被落盘', pasted.body.definitions, ['pasteTest'])
   check('顺手建了运行期连接', [loaderEntries.size, pasted.body.connected], [1, ['pasteTest']])
-  const savedMcpJson = JSON.parse(readFileSync(join(ws, '.mcp.json'), 'utf8'))
-  check('粘贴的定义也写进 .mcp.json（CC 形状）', savedMcpJson.mcpServers.pasteTest.command, 'cmd')
-  check('门禁条目写在项目配置里',
-    JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8')).mcp.servers.pasteTest, 'on')
+  const savedOwn = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
+  check('粘贴的定义写进本插件配置', savedOwn.mcp.definitions.pasteTest.command, 'cmd')
+  check('门禁条目也写在同一份里', savedOwn.mcp.servers.pasteTest, 'on')
 }
 
 console.log('skill 读取与手动调用')
@@ -428,7 +425,7 @@ console.log('切换工作区：只保留当前项目的连接')
     json: JSON.stringify({ serverName: 'switchTest', transport: 'streamable-http', url: 'http://127.0.0.1:1/x' }),
   })
   check('在本项目里建了一条连接', saved.body.state.mcp.connections.managed.includes('switchTest'), true)
-  check('写进项目级 .mcp.json', saved.body.kind, 'mcp.json')
+  check('写进本插件配置', saved.body.kind, 'plugin')
   check('运行期有它', [...loaderEntries.values()].some((e) => e.options.config.serverName === 'switchTest'), true)
 
   const stateB = await getState(wsB)
