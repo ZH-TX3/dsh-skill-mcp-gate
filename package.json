@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-mcp-gate",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "private": true,
   "description": "DSH 插件：用配置 + 设置页控制 skill / MCP 的可见性与可调用性，支持全局 + 项目双层覆盖",
   "type": "module",
@@ -32,7 +32,7 @@
     }
   },
   "scripts": {
-    "test": "node test/policy.test.mjs && node test/mcp.test.mjs && node test/store.test.mjs && node test/listing.test.mjs && node test/catalog.test.mjs && node test/claude-skills.test.mjs && node test/claude-mcp.test.mjs && node test/scope.test.mjs && node test/wiring.test.mjs && node test/rules.test.mjs && node test/rules-inject.test.mjs && node test/middle-layer.test.mjs && node test/gate-tools.test.mjs && node test/client.test.mjs && node test/e2e.test.mjs",
+    "test": "node test/policy.test.mjs && node test/mcp.test.mjs && node test/store.test.mjs && node test/listing.test.mjs && node test/catalog.test.mjs && node test/claude-skills.test.mjs && node test/claude-mcp.test.mjs && node test/scope.test.mjs && node test/wiring.test.mjs && node test/rules.test.mjs && node test/rules-inject.test.mjs && node test/probe.test.mjs && node test/middle-layer.test.mjs && node test/gate-tools.test.mjs && node test/client.test.mjs && node test/e2e.test.mjs",
     "test:registry": "node test/registry-shadow.mjs",
     "preview": "node test/preview.mjs"
   }

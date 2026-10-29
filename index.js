@@ -19,7 +19,9 @@ import { GLOBAL_WS, loadWorkspace } from './lib/load.js'
 import { configPaths } from './lib/paths.js'
 import { planListing } from './lib/core/listing.js'
 import { assertMcpState, assertMcpToolState, assertSkillState } from './lib/core/policy.js'
-import { agentCwd, workspaceList } from './lib/platform/observe.js'
+import { agentCwd, toolNames, workspaceList } from './lib/platform/observe.js'
+import { groupToolsByServer } from './lib/core/mcp-policy.js'
+import { runProbe } from './lib/platform/probe.js'
 import { createSkillProvider } from './lib/platform/provider.js'
 import { createCatalogGate } from './lib/platform/catalog.js'
 import { createMcpFilter } from './lib/platform/mcp-filter.js'
@@ -28,7 +30,9 @@ import { createRulesInjector } from './lib/platform/rules-injector.js'
 import { createSnapshotter } from './lib/host/snapshot.js'
 import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
-import { addServerNames, setServerState, setSkillState, setToolState } from './lib/io.js'
+import {
+  addServerNames, removeServer, renameServer, setServerState, setSkillState, setToolState,
+} from './lib/io.js'
 
 export const name = 'skill-mcp-gate'
 
@@ -203,6 +207,51 @@ export function apply(ctx, config = {}) {
     return { names, file, workspace: ws }
   }
 
+  /** 只允许改「本插件自己写的」条目；CC 的定义一律不碰。 */
+  function ownEntry(serverName) {
+    const entry = current?.servers.get(serverName)
+    if (!entry) throw new Error(`没有 "${serverName}" 这条记录`)
+    if (entry.layer === 'cc') {
+      throw new Error(`"${serverName}" 的定义来自 Claude Code，本插件不改 CC 的文件；要停用它请把状态设为 off`)
+    }
+    return entry
+  }
+
+  function removeServerEntry(serverName) {
+    const entry = ownEntry(serverName)
+    if (!removeServer(entry.file, serverName)) {
+      throw new Error(`"${serverName}" 不在 ${entry.file} 里，可能已被其它地方移除了`)
+    }
+    reload(current.workspace)
+    return { file: entry.file }
+  }
+
+  function renameServerEntry(from, to) {
+    if (typeof to !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(to)) {
+      throw new Error(`"${to}" 不是合法的服务器名（字母数字 _ . - ，最长 64）`)
+    }
+    const entry = ownEntry(from)
+    if (from !== to && current.servers.has(to)) throw new Error(`"${to}" 已经存在`)
+    if (!renameServer(entry.file, from, to)) {
+      throw new Error(`"${from}" 不在 ${entry.file} 里，可能已被其它地方移除了`)
+    }
+    reload(current.workspace)
+    return { file: entry.file, from, to }
+  }
+
+  /** 真探测一台服务器：运行态 + （能拿到定义时）http / 可执行文件。 */
+  async function probeServer(serverName) {
+    const entry = current?.servers.get(serverName)
+    const ccInfo = current?.claudeMcp?.servers.find((item) => item.name === serverName)
+    const connected = groupToolsByServer(toolNames(ctx, warn)).has(serverName)
+    const result = await runProbe({
+      connected,
+      ccScope: entry?.ccScope ?? ccInfo?.scope ?? null,
+      definition: ccInfo?.definition,
+    })
+    return { name: serverName, connected, ...result }
+  }
+
   // ── 接线 ──────────────────────────────────────────────
   reload()
 
@@ -234,6 +283,9 @@ export function apply(ctx, config = {}) {
     setServer,
     setTool,
     addServers,
+    removeServer: removeServerEntry,
+    renameServer: renameServerEntry,
+    probeServer,
   })
   const routeDisposers = routes.map((route) => ctx.webServer.register(route))
 

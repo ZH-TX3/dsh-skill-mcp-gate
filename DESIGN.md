@@ -1036,3 +1036,58 @@ CC 的 `.claude/rules/` 不是一个目录，是一套**条件加载**协议：
 - `test/rules-inject.test.mjs`：首轮只注入无条件、第二轮不重复、触碰后按 paths 注入、
   失败/其它工具/已取消的触碰都不算、预算提示只发一次、关闭开关、无 agent 直通、reject 直通
 - `middle-layer.test.mjs` 追加事件计数断言：`agent/pre-step` 必须有两个监听（目录门禁 + rules）
+
+## 22. v0.11.0 — 条目管理 + 连通性探测
+
+### 22.1 边界：我们只改自己的配置
+
+用户「添加错了改不了」的痛点，根源是之前只有 `add` 没有 `remove / rename`。
+
+但**能改到哪一层**必须先划清：
+
+| 条目来源 | 能改 | 为什么 |
+|---|---|---|
+| 本插件全局 / 项目配置 | ✅ 改 / 删 | 那是我们自己的文件 |
+| Claude Code 的定义（`layer === 'cc'`） | ❌ 只有状态可以被覆盖成 `off` | 零写入用户文件是这条插件的底线；改 CC 的 `.mcp.json` 等于替用户动了另一个工具 |
+| DSH profile（`cordis.yml` 里一行一台） | ❌ 完全不碰 | `dsh-mcp-client` 是一实例一服务器，改它等于改部署 |
+
+所以 `ownEntry()` 见到 `layer === 'cc'` 直接抛错并说明「要停用请设 off」，
+面板上两个按钮是禁用态。**不假装能删**。
+
+### 22.2 改名的层级语义（容易误解，写清楚）
+
+`renameServer` 只搬「当前赢的那一层」。若同名条目同时存在于本插件全局与项目层，
+改名后项目层变成新名字、旧名字会**回落到全局层的那条**——面板上会看到它还在，只是层 tag 变了。
+
+这是有意的：跨层批量改名会同时改两个文件，用户很难预期。
+
+### 22.3 探测：三种模式，宁可说不知道
+
+| 输入 | 探测 | 判定 |
+|---|---|---|
+| CC 定义有 `url` | `fetch(GET, 4s, headers)` | 收到响应即可达（400/405 也算）——MCP 端点本来就不响应 GET |
+| CC 定义有 `command` | 在 `PATH` / 绝对路径里找可执行文件 | 找到即「可执行」，**不 spawn**：启动第三方 MCP 有副作用，也可能卡住会话 |
+| 看不到定义 | 不探测 | 分三种原因回话：已连上但定义在 profile / CC 只声明没细节 / 只登记过名字 |
+
+`connected` 与探测结果是两个维度，界面上分开显示：
+「通」不等于「DSH 连上了」，「连上了」也不一定探得通。
+
+`${VAR}` / `${VAR:-default}` 按 `process.env` 展开（`core/probe.js` 纯函数，`platform/probe.js` 执行）。
+
+### 22.4 落点
+
+| 层 | 文件 | 内容 |
+|---|---|---|
+| 位置 | 无新增 | 沿用 `cc/mcp.js` 里已有的文件路径 |
+| CC 知识 | `lib/cc/mcp.js` | `definitionOf()`：从 `mcpServers` 条目里抽 `type/url/command/args/headers` |
+| 纯逻辑 | `lib/core/probe.js` | `planProbe()` 三态判定、`expandEnv()` |
+| 副作用 | `lib/platform/probe.js` | `fetch` / PATH 查找，失败只回话不抛 |
+| I/O | `lib/io.js` | `removeServer()` / `renameServer()`，返回布尔（没改就 false） |
+| 表面 | `lib/host/routes.js` | `POST /mcp/remove` `/mcp/rename` `/mcp/probe` |
+
+### 22.5 验证
+
+- `test/probe.test.mjs`：`${VAR}` 三种形态、三种探测计划、本地 http server（405 算可达）、拒连、300ms 超时、PATH 命中/不命中、无定义
+- `test/store.test.mjs`：改名搬状态、目标重名报错且不写坏文件、删除返回布尔、删空后清掉空块、无关键不受影响
+- `test/middle-layer.test.mjs`：三条路由真跑（改名后回落全局层、删不存在的条目 400、CC-only 条目拒绝删除）
+- 真实实例（3099）实测：`exa` → `HTTP 405 · 689ms` 可达；`context7`（command=cmd）→ 找到 `cmd.exe`；只登记名字的 `demo-server` → unknown 并说明原因

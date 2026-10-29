@@ -4,7 +4,7 @@
  * 验证「延迟服务器 → 索引 → gate_mcp_search → gate_mcp_call → 嵌套 dispatch」整条链路。
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -23,7 +23,12 @@ writeFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), JSON.stringify({
 }), 'utf8')
 
 // CC 侧：user 作用域声明了 exa，并且在 CC 里被拒绝（settings 的 disabledMcpjsonServers）
-writeFileSync(join(home, '.claude.json'), JSON.stringify({ mcpServers: { exa: { command: 'npx' } } }), 'utf8')
+writeFileSync(join(home, '.claude.json'), JSON.stringify({
+  mcpServers: {
+    exa: { type: 'http', url: 'http://127.0.0.1:1/mcp' },
+    ccOnly: { type: 'http', url: 'http://127.0.0.1:1/only-in-cc' },
+  },
+}), 'utf8')
 mkdirSync(join(home, '.claude'), { recursive: true })
 writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ disabledMcpjsonServers: ['exa'] }), 'utf8')
 
@@ -157,6 +162,77 @@ console.log('\n没有延迟服务器时中间层不占位')
   await commands[0].handler({ rawInput: `reload ${ws}` })
   await assemble(offAssembly, {}, async () => offAssembly)
   check('中间层被摘掉', offAssembly.tools.map((t) => t.name), ['mcp__exa__crawl'])
+}
+
+console.log('' + '\n条目管理：改名 / 删除 / 探测')
+{
+  const tokenRoute = routes.find((r) => r.path.endsWith('/token'))
+  let token = null
+  tokenRoute.handler({}, { statusCode: 200, setHeader() {}, end(body) { token = JSON.parse(body).token } })
+
+  const call = (suffix, body) => new Promise((resolve, reject) => {
+    const route = routes.find((r) => r.path.endsWith(suffix))
+    if (!route) return reject(new Error(`没有路由 ${suffix}`))
+    const timer = setTimeout(() => reject(new Error(`${suffix} 没写响应`)), 5000)
+    const res = {
+      statusCode: 200,
+      setHeader() {},
+      end(chunk) { clearTimeout(timer); resolve({ status: this.statusCode, body: JSON.parse(chunk) }) },
+    }
+    route.handler({ method: 'POST', headers: { 'x-gate-token': token }, url: '/' , on() {}, }, res)
+    void body
+  })
+
+  // 路由的 withBody 会读 req 的 data/end，补一个最小可读流
+  const callJson = (suffix, payload) => new Promise((resolve, reject) => {
+    const route = routes.find((r) => r.path.endsWith(suffix))
+    if (!route) return reject(new Error(`没有路由 ${suffix}`))
+    const timer = setTimeout(() => reject(new Error(`${suffix} 没写响应`)), 5000)
+    const handlers = {}
+    const req = {
+      method: 'POST',
+      headers: { 'x-gate-token': token },
+      url: '/',
+      on(event, fn) { handlers[event] = fn },
+    }
+    const res = {
+      statusCode: 200,
+      setHeader() {},
+      end(chunk) { clearTimeout(timer); resolve({ status: this.statusCode, body: JSON.parse(chunk) }) },
+    }
+    route.handler(req, res)
+    handlers.data?.(JSON.stringify(payload ?? {}))
+    handlers.end?.()
+  })
+
+  const renamed = await callJson('/mcp/rename', { from: 'exa', to: 'exa2' })
+  check('改名返回 ok', renamed.body.ok, true)
+  check('改名后快照里有新名字', renamed.body.state.mcp.servers.some((srv) => srv.name === 'exa2'), true)
+  // 只搬「赢的那一层」：项目层改了名，全局层还有同名条目，所以 exa 仍在列表里
+  const exaNow = renamed.body.state.mcp.servers.find((srv) => srv.name === 'exa')
+  check('旧名字回落到下一层（全局）而不是消失', exaNow?.layer, 'global')
+  check('改名写在项目层文件里',
+    JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8')).mcp.servers.exa2 !== undefined, true)
+
+  const probeExa = await callJson('/mcp/probe', { server: 'exa' })
+  check('CC 有定义的服务器走 http 探测', probeExa.body.probe.mode, 'http')
+  check('探测如实报不可达', probeExa.body.probe.ok, false)
+  check('探测带原因', String(probeExa.body.probe.detail).length > 0, true)
+
+  const probeRenamed = await callJson('/mcp/probe', { server: 'exa2' })
+  check('改过名的看不到 CC 定义 → unknown', probeRenamed.body.probe.mode, 'unknown')
+  check('并说明为什么', String(probeRenamed.body.probe.reason).includes('只在本插件'), true)
+
+  const removed = await callJson('/mcp/remove', { server: 'exa2' })
+  check('删除返回 ok', removed.body.ok, true)
+  check('删除后快照里没有它', removed.body.state.mcp.servers.some((srv) => srv.name === 'exa2'), false)
+
+  const again = await callJson('/mcp/remove', { server: 'exa2' })
+  check('删不存在的条目报错而不是假装成功', again.status, 400)
+
+  const ccOnly = await callJson('/mcp/remove', { server: 'ccOnly' })
+  check('CC-only 的条目拒绝删除', ccOnly.status, 400)
+  check('并说明理由', String(ccOnly.body.error).includes('Claude Code'), true)
 }
 
 rmSync(home, { recursive: true, force: true })

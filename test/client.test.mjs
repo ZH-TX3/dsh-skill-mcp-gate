@@ -214,6 +214,16 @@ check('延迟按钮在（可切成本策略）', t3.includes('延迟中'), true)
 check('CC 未批准 pill', t3.includes('CC 未批准'), true)
 check('CC 已拒绝 pill', t3.includes('CC 已拒绝'), true)
 
+console.log('条目操作区')
+{
+  const opened = render(['mcps', S, null, null, { exa: true }, null, '', null, { exa: true }])
+  check('展开后出现重命名', opened.includes('重命名'), true)
+  check('展开后出现删除', opened.includes('删除'), true)
+  check('展开后出现测试连通', opened.includes('测试连通'), true)
+  const closed = render(['mcps', S, null, null, {}, null, '', null])
+  check('默认收起', closed.includes('重命名'), false)
+}
+
 console.log('工具展开')
 const t4 = render(['mcps', S, null, null, { exa: true }, null, '', null])
 check('展开出现工具名', t4.includes('search'), true)

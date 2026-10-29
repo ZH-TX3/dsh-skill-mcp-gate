@@ -23,6 +23,30 @@
 
 > v0.4.0 起从「设置内一页」改为左侧一级面板，与 `dsh-context` 同级。
 
+## 条目管理与连通性探测
+
+面板里每台服务器右侧有个 `⋯`，展开是三个动作：
+
+| 动作 | 做什么 | 不做什么 |
+|---|---|---|
+| **重命名** | 把这条记录（状态 + 逐工具配置）搬到新名字 | 不改 DSH profile，不改 CC 的文件 |
+| **删除** | 从它所在的那层配置里删掉这条记录 | 同上；配置文件变空时顺手清掉空的 `mcp` 块 |
+| **测试连通** | 真发一次探测，结果显示在按钮旁边 | 不改任何配置、不落缓存 |
+
+**只允许改本插件自己写的条目**。`layer` 是 `cc` 的条目（只存在于 Claude Code 的定义里）两个按钮都是禁用态，
+并说明理由：那是 CC 的文件，本插件不写；要停用它请把状态设为 `off`。
+
+### 探测的三种结论（如实区分，不包装成"能不能用"）
+
+| 情况 | 探测方式 | 结果含义 |
+|---|---|---|
+| CC 文件里有 `url` | 发一次 `GET`（4s 超时，跟随 `Authorization` 等 header，`${VAR}` 按环境变量展开） | **能收到响应就算可达**。MCP 端点对 GET 常回 400/405，那也是通 |
+| CC 文件里有 `command` | 只在 `PATH` / 绝对路径里找可执行文件 | **不启动进程**。启动第三方 MCP 有副作用，这里只回答"命令在不在" |
+| 看不到定义 | 不探测 | 说明原因：已连上但定义在 DSH profile 里 / CC 只声明没给 url 或 command / 只在本插件登记过名字 |
+
+`connected` 字段单列：它表示「这台服务器的工具当前是否真的出现在本会话的装配产物里」，
+与探测通不通是两件事——通不代表 DSH 连了，连了也不一定探得通（比如本地 stdio 没定义）。
+
 ## 延迟加载与中间层（对齐 CC 的 tool search）
 
 MCP 工具常驻提示词是最大的固定开销。把服务器设为 `deferred`：
@@ -219,6 +243,9 @@ CC 把 MCP 服务器放在三个地方，本插件只取名与批准状态，不
 | `/api/skill-mcp-gate/skill` | POST | `{ name, state }` |
 | `/api/skill-mcp-gate/mcp` | POST | `{ server, state }` |
 | `/api/skill-mcp-gate/tool` | POST | `{ server, tool, state }` |
+| `/api/skill-mcp-gate/mcp/remove` | POST | `{ server }` 删掉本插件配置里的这条记录 |
+| `/api/skill-mcp-gate/mcp/rename` | POST | `{ from, to }` 改本插件配置里的记录名 |
+| `/api/skill-mcp-gate/mcp/probe` | POST | `{ server }` 探测连通性（http GET / PATH 查找） |
 | `/api/skill-mcp-gate/reload` | POST | 重新加载 |
 
 ## 为什么 skill 不用 runtime 影子
@@ -264,7 +291,7 @@ cd ~/.dsh/plugins/dsh-skill-mcp-gate
 npm test
 ```
 
-十五个套件，零依赖，不启动 DSH：
+十六个套件，零依赖，不启动 DSH：
 
 | 测试 | 覆盖 |
 |---|---|
@@ -278,7 +305,8 @@ npm test
 | `gate-tools.test.mjs` | 中间层：检索打分、名字解析、拒绝规则、嵌套 dispatch 的身份与取消、结果降级 |
 | `rules.test.mjs` | CC rules：frontmatter（列表/逗号/缺失/坏掉）、花括号展开与预算、glob 语义、注入规划 |
 | `rules-inject.test.mjs` | rules 注入：无条件先注入、触碰后按 paths 注入、不重复、失败/取消的触碰不算、预算提示 |
-| `middle-layer.test.mjs` | 端到端（假 ctx）：真跑 apply + 装配 waterfall → 索引 → 搜索 → 调用 → 嵌套派发 |
+| `probe.test.mjs` | 探测：三种模式的计划、`${VAR}` 展开、本地 http 端点（含 405/拒连/超时）、PATH 查找 |
+| `middle-layer.test.mjs` | 端到端（假 ctx）：装配过滤 → 索引 → 搜索 → 调用 → 嵌套派发；改名/删除/探测三条路由 |
 | `scope.test.mjs` | 工作区作用域列表与写层选择 |
 | `wiring.test.mjs` | 假 ctx：真跑一次 `system-prompt/assemble` waterfall 验证过滤；命令面 + 路由 + token 鉴权 + 落盘 |
 | `client.test.mjs` | 假 react 执行 client.js 并直接渲染面板，断言 tab 名、分组标题、行文案真的出现在渲染树里 |
