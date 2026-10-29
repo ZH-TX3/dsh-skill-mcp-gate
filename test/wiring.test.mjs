@@ -78,8 +78,8 @@ const readConfig = () => JSON.parse(readFileSync(join(home, 'skill-mcp-gate', 's
 
 console.log('注册')
 check('gate 命令', commands[0]?.name, 'gate')
-check('13 条路由', routes.map((r) => r.path.split('/').slice(-1)[0]).sort(),
-  ['add', 'define', 'definition', 'mcp', 'probe', 'reload', 'remove', 'rename', 'skill', 'state', 'token', 'tool', 'undefine'])
+check('15 条路由', routes.map((r) => r.path.split('/').slice(-1)[0]).sort(),
+  ['add', 'content', 'define', 'definition', 'invoke', 'mcp', 'probe', 'reload', 'remove', 'rename', 'skill', 'state', 'token', 'tool', 'undefine'])
 check('装了装配过滤器', typeof listeners.get('system-prompt/assemble'), 'function')
 
 console.log('\n装配期过滤（真跑一次 waterfall handler）')

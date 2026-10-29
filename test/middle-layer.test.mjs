@@ -72,7 +72,18 @@ const fakeLoader = {
 
 const ctx = {
   get: (name) => (name === 'loader' ? fakeLoader : undefined),
-  skills: { list: async () => [], registerProvider: () => () => {} },
+  skills: {
+    list: async () => [],
+    registerProvider: () => () => {},
+    get: async (name) => (name === 'ghostSkill' ? undefined : {
+      name,
+      provider: 'fake',
+      content: `# ${name} 的正文`,
+      source: 'user-dsh',
+      description: 'd',
+      invocation: { modelInvocable: true, userInvocable: true },
+    }),
+  },
   commands: { register: (def) => { commands.push(def); return () => {} } },
   tools: {
     schemas: () => [],
@@ -96,7 +107,7 @@ await new Promise((r) => setTimeout(r, 80))
 console.log('注册')
 {
   // 目录门禁与 rules 注入都挂在 agent/pre-step 上，装配过滤器与 rules 各自挂自己的事件
-  check('agent/pre-step 有两个监听（目录门禁 + rules）', eventCounts['agent/pre-step'], 2)
+  check('agent/pre-step 有三个监听（目录门禁 + rules + 手动调用）', eventCounts['agent/pre-step'], 3)
   check('tools/result 有 rules 监听', eventCounts['tools/result'], 1)
   check('system-prompt/assemble 有装配过滤器', eventCounts['system-prompt/assemble'], 1)
 }
@@ -340,6 +351,43 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('顺手建了运行期连接', [loaderEntries.size, pasted.body.connected], [1, ['pasteTest']])
   const savedConfig = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
   check('配置里存的是连接定义', savedConfig.mcp.definitions.pasteTest.command, 'cmd')
+}
+
+console.log('skill 读取与手动调用')
+{
+  const tokenRoute = routes.find((r) => r.path.endsWith('/token'))
+  let token = null
+  tokenRoute.handler({}, { statusCode: 200, setHeader() {}, end(body) { token = JSON.parse(body).token } })
+  const callJson = (suffix, payload) => new Promise((resolve, reject) => {
+    const route = routes.find((r) => r.path.endsWith(suffix))
+    if (!route) return reject(new Error(`没有路由 ${suffix}`))
+    const timer = setTimeout(() => reject(new Error(`${suffix} 没写响应`)), 5000)
+    const handlers = {}
+    const req = { method: 'POST', headers: { 'x-gate-token': token }, url: '/', on(event, fn) { handlers[event] = fn } }
+    const res = { statusCode: 200, setHeader() {}, end(chunk) { clearTimeout(timer); resolve({ status: this.statusCode, body: JSON.parse(chunk) }) } }
+    route.handler(req, res)
+    handlers.data?.(JSON.stringify(payload ?? {}))
+    handlers.end?.()
+  })
+
+  const content = await callJson('/skill/content', { name: 'demo' })
+  check('能读到技能正文', content.body.skill.content, '# demo 的正文')
+  check('带上 provider', content.body.skill.provider, 'fake')
+  check('带上当前档位', content.body.skill.state, 'on')
+
+  const missing = await callJson('/skill/content', { name: 'ghostSkill' })
+  check('读不到时 400', missing.status, 400)
+  check('并说明原因', String(missing.body.error).includes('目录里没有 skill'), true)
+
+  const noSession = await callJson('/skill/invoke', { name: 'demo' })
+  check('没有活动会话时拒绝', noSession.status, 400)
+  check('并指路', String(noSession.body.error).includes('没有活动会话'), true)
+
+  await callJson('/skill', { name: 'demo', state: 'off' })
+  const offInvoke = await callJson('/skill/invoke', { name: 'demo' })
+  check('off 的技能不能手动调用', offInvoke.status, 400)
+  check('并说明怎么恢复', String(offInvoke.body.error).includes('仅手动'), true)
+  await callJson('/skill', { name: 'demo', state: 'on' })
 }
 
 rmSync(home, { recursive: true, force: true })

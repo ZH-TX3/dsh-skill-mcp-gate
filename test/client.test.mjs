@@ -189,6 +189,7 @@ check('内置组标题在', t1.includes('内置技能'), true)
 check('内置组默认折叠（行不可见）', t1.includes('dataviz'), false)
 check('折叠时给出分组说明', t1.some((t) => t.includes('~/.claude/skills')), true)
 check('页脚统计', t1.some((t) => t.includes('个关闭')), true)
+check('技能行有「内容」按钮（可预览 + 手动调用）', t1.includes('内容'), true)
 
 console.log('Skills tab（全部展开）')
 const t1b = render(['skills', S, null, null, {}, null, '', null, {}, {}, null, {}, { user: false, builtin: false }])

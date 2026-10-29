@@ -4,7 +4,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { parseFrontmatter, scanSkillDir } from '../lib/cc/skills.js'
+import { parseFrontmatter, scanSkillDir, findSkillFile } from '../lib/cc/skills.js'
 import { createSkillProvider } from '../lib/platform/provider.js'
 
 let failures = 0
@@ -78,6 +78,15 @@ console.log(NL + 'scanSkillDir')
 }
 {
   check('目录不存在时返回空', scanSkillDir(join(root, 'missing'), { rank: 1, source: 'x', providerName: 'p' }), [])
+}
+
+console.log(NL + 'findSkillFile（不走 registry）')
+{
+  const hit = findSkillFile([{ dir: projectDir, rank: 150, source: 'claude-project' }], 'alpha')
+  check('按名字找到文件', hit.name, 'alpha')
+  check('正文不含 frontmatter', hit.content.trim(), 'ALPHA-BODY')
+  check('带资源基址', hit.resourceBase.path, join(projectDir, 'alpha'))
+  check('找不到返回 undefined', findSkillFile([{ dir: projectDir, rank: 1, source: 'x' }], 'nope'), undefined)
 }
 
 console.log(NL + 'provider')

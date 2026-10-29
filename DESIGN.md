@@ -1335,3 +1335,51 @@ Skills 分组折叠之后，MCP 也照做，避免两边交互不一致。
 `test/client.test.mjs`：新增「MCPs tab（默认：只展开本项目组）」——组标题在、项目行可见、
 全局与 CC 组只有标题；其余 MCP 用例统一走 `mcpHooks()` 把三个非项目组展开。
 `npm test` 16 套件 560 项全绿。
+
+## 29. v0.13.0 — 技能：读正文 + 手动调用一次
+
+### 29.1 为什么这是 MCP 之外的另一码事
+
+MCP 必须「定义 + 连接」才能用，插件只能做适配与代管；**技能只是文件**，
+所以面板不仅能列，还能直接读正文、直接替你调一次。
+
+DSH 的 skill 只有一条入口：模型通过 `skill` 工具加载。没有 `/name`。
+结果就是 `user-invocable-only` 与 `off` 在 DSH 里行为一致（都不可见、都拦调用）——
+这是 v0.7.0 报告里承认过的「四档塌成三档」。
+
+这个接缝补上用户那条路：面板点「调用一次」= 以用户身份把技能正文注入下一次请求。
+
+### 29.2 实现
+
+| 层 | 文件 | 内容 |
+|---|---|---|
+| 外壳 | `lib/platform/skill-invoke.js` | `renderSkillContent()` 复刻 `dsh-skill` 的 `<skill_content>` 形状（含 `<skill_resources>` 与 `<skill_instructions>`） |
+| 队列 | 同上 | `WeakMap<agent, [{name,text}]>`，每 agent 最多 4 条；`agent/pre-step` 一次刷成 user 消息后清空 |
+| 读正文 | 同上 | 先 `ctx.skills.get(name, { cwd, scope: agent })`；没有会话读不到 agent 层时回退到 `findSkillFile()` |
+| 文件回退 | `lib/cc/skills.js` | `findSkillFile(dirs, name)`：扫目录、剥 frontmatter、给出 `resourceBase` |
+| 表面 | `lib/host/routes.js` | `POST /skill/content`、`POST /skill/invoke` |
+
+`renderSkillContent` 没有 import `@deepseek-ai/dsh-skill`（本地路径插件解析不到），
+而是照着同一个形状手写：外壳对了，模型就认得。
+
+### 29.3 边界
+
+| 情况 | 行为 |
+|---|---|
+| 技能 `off` | 拒绝，并提示「设为仅手动或正常」——不让手动调用变成绕过关闭的后门 |
+| 没有活动会话 | 拒绝注入（说清原因），但**内容照样能读**（走文件回退） |
+| 同一技能连点多次 | 排队上限 4，注入后清空，不会堆成上下文炸弹 |
+| 注入后 | 只生效一次；不修改磁盘上的 SKILL.md |
+
+### 29.4 验证
+
+- `test/skill-invoke.test.mjs`：外壳（有无目录基址、属性转义）、读正文、排队 → pre-step 注入、
+  只注入一次、无 agent 拒绝、reject 直通、registry 读不到时回退
+- `test/middle-layer.test.mjs`：`/skill/content` 返回正文与档位；读不到 400；
+  `/skill/invoke` 无会话 400 且指路；`off` 技能 400 且说明怎么恢复
+- `test/claude-skills.test.mjs`：`findSkillFile()` 找文件、剥 frontmatter、给资源基址
+- **真实实例（3099）**：
+  - `caveman` → `provider=claude-skills state=name-only chars=4406`，正文首行正确
+  - `karpathy-guidelines` → 2296 字符
+  - 无会话时 `/skill/invoke` → `400 当前没有活动会话，注入无处可去 —— 先在左边打开一个会话`
+- `npm test` 17 套件 594 项全绿

@@ -19,16 +19,19 @@ import { GLOBAL_WS, loadWorkspace } from './lib/load.js'
 import { configPaths } from './lib/paths.js'
 import { planListing } from './lib/core/listing.js'
 import { assertMcpState, assertMcpToolState, assertSkillState } from './lib/core/policy.js'
-import { agentCwd, toolNames, workspaceList } from './lib/platform/observe.js'
+import { agentCwd, liveAgents, toolNames, workspaceList } from './lib/platform/observe.js'
 import { groupToolsByServer } from './lib/core/mcp-policy.js'
 import { runProbe } from './lib/platform/probe.js'
 import { createMcpConnections } from './lib/platform/mcp-connections.js'
 import { normalizeDefinition, parseServerInput, probeInfoFromConfig, templateFromCc } from './lib/core/mcp-definition.js'
+import { findSkillFile } from './lib/cc/skills.js'
+import { skillDirs } from './lib/paths.js'
 import { createSkillProvider } from './lib/platform/provider.js'
 import { createCatalogGate } from './lib/platform/catalog.js'
 import { createMcpFilter } from './lib/platform/mcp-filter.js'
 import { createGateTools } from './lib/platform/gate-tools.js'
 import { createRulesInjector } from './lib/platform/rules-injector.js'
+import { createSkillInvoker } from './lib/platform/skill-invoke.js'
 import { createSnapshotter } from './lib/host/snapshot.js'
 import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
@@ -130,12 +133,16 @@ export function apply(ctx, config = {}) {
 
   const connections = createMcpConnections({ ctx, log })
 
+  // 手动调用：面板上点「调用一次」= 以用户身份把技能正文注入下一次请求
+  const skillInvoker = createSkillInvoker({ ctx, log })
+
   const status = () => ({
     catalog: catalogGate.status(),
     mcp: mcpFilter.status(),
     tools: gateTools ? gateTools.status() : { errors: [], disabled: true },
     rules: rulesInjector ? rulesInjector.status() : { disabled: true, injected: 0, last: [], errors: [] },
     connections: { ...connections.status(), managed: [...(current?.definitions?.keys() ?? [])] },
+    skillInvoke: skillInvoker.status(),
   })
   const snapshot = createSnapshotter({
     ctx,
@@ -339,6 +346,37 @@ export function apply(ctx, config = {}) {
     return result
   }
 
+  /** 稳定的会话上下文：注入要落到某个 agent 上。 */
+  function sessionAgent() {
+    return liveAgents(ctx, warn)[0]
+  }
+
+  async function readSkillContent(skillName) {
+    const agent = sessionAgent()
+    const cwd = agent?.session?.header?.cwd ?? current?.projectDir ?? undefined
+    const state = current?.skills.get(skillName)?.state ?? 'on'
+    const dirs = skillDirs(typeof cwd === 'string' ? cwd : null, config.ccHome)
+    const skill = await skillInvoker.read(skillName, {
+      cwd,
+      agent,
+      fallback: (name) => findSkillFile([...dirs.project, ...dirs.user], name),
+    })
+    return { state, ...skill }
+  }
+
+  /** 手动调用一次：读正文 → 排队 → 下一次请求生效。 */
+  async function invokeSkill(skillName) {
+    const state = current?.skills.get(skillName)?.state ?? 'on'
+    if (state === 'off') {
+      throw new Error(`"${skillName}" 已关闭（off），不能调用。想手动用就把它设为「仅手动」或「正常」。`)
+    }
+    const agent = sessionAgent()
+    if (!agent) throw new Error('当前没有活动会话，注入无处可去 —— 先在左边打开一个会话')
+    const skill = await readSkillContent(skillName)
+    const pending = skillInvoker.enqueue(agent, skill)
+    return { name: skillName, pending, agent: String(agent.id ?? '') }
+  }
+
   // ── 接线 ──────────────────────────────────────────────
   reload()
 
@@ -376,10 +414,13 @@ export function apply(ctx, config = {}) {
     getDefinition,
     saveDefinition,
     deleteDefinition,
+    readSkillContent,
+    invokeSkill,
   })
   const routeDisposers = routes.map((route) => ctx.webServer.register(route))
 
   syncConnections().catch((error) => warn(`灌入 MCP 连接失败: ${error.message}`))
+  skillInvoker.install()
 
   rulesInjector?.install()
   gateTools?.install()
@@ -392,5 +433,6 @@ export function apply(ctx, config = {}) {
     mcpFilter.dispose()
     gateTools?.dispose()
     rulesInjector?.dispose()
+    skillInvoker.dispose()
   }, 'skill-mcp-gate: cleanup')
 }

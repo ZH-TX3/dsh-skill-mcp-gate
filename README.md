@@ -118,6 +118,21 @@ MCP 工具常驻提示词是最大的固定开销。把服务器设为 `deferred
 - 嵌套结果只转发文本；图片/音视频等非文本块会在结尾写明 `[未转发的非文本内容：image×2]`
 - **不新增依赖**：手写 `ToolDefinition`，不去 import 解析不到的 `defineTool`
 
+## 读技能正文 / 手动调用一次
+
+技能是文件，所以面板可以直接读、也可以替你调一次——这补的是 DSH 缺的那条**用户入口**
+（DSH 里 skill 只有「模型通过 `skill` 工具加载」，没有 `/name`）：
+
+- 每个技能行有个「内容」按钮：展开正文预览（`pre` 限高滚动），显示 provider 与字符数
+- 预览里可以点「调用一次」：把该技能的正文以 `<skill_content>` 形状注入**下一次请求**，
+  等价于用户手动触发，模型不必再调 `skill` 工具
+- 这就是 `user-invocable-only` 与 `off` 的区别落地处：前者可被手动调用，后者直接拒绝
+- 一次生效、不排队堆积（每 agent 最多排 4 条，注入后清空）
+
+读正文有两条路：优先走 `ctx.skills.get()`（provider 由 DSH 挑）；**没有活动会话时**
+registry 读不到 agent 层，于是回退到直接扫目录（`.dsh/skills`、`.claude/skills`、`.agents/skills`），
+所以点「内容」永远有东西看。注入必须有活动会话，没会话会明确告诉你。
+
 ## 把 CC 的 `rules/` 迁过来（路径门控）
 
 Claude Code 的 `.claude/rules/**/*.md` 支持 `paths:` 前置元数据：规则只在读写命中文件时才进上下文。
@@ -296,6 +311,8 @@ CC 把 MCP 服务器放在三个地方，本插件只取名与批准状态，不
 | `/api/skill-mcp-gate/mcp/remove` | POST | `{ server }` 删掉本插件配置里的这条记录 |
 | `/api/skill-mcp-gate/mcp/rename` | POST | `{ from, to }` 改本插件配置里的记录名 |
 | `/api/skill-mcp-gate/mcp/probe` | POST | `{ server }` 探测连通性（http GET / PATH 查找） |
+| `/api/skill-mcp-gate/skill/content` | POST | `{ name }` 读技能正文（registry → 文件回退） |
+| `/api/skill-mcp-gate/skill/invoke` | POST | `{ name }` 手动调用一次（off 拒绝、无会话拒绝） |
 | `/api/skill-mcp-gate/reload` | POST | 重新加载 |
 
 ## 为什么 skill 不用 runtime 影子
@@ -341,7 +358,7 @@ cd ~/.dsh/plugins/dsh-skill-mcp-gate
 npm test
 ```
 
-十六个套件，零依赖，不启动 DSH：
+十七个套件，零依赖，不启动 DSH：
 
 | 测试 | 覆盖 |
 |---|---|
@@ -356,6 +373,7 @@ npm test
 | `rules.test.mjs` | CC rules：frontmatter（列表/逗号/缺失/坏掉）、花括号展开与预算、glob 语义、注入规划 |
 | `rules-inject.test.mjs` | rules 注入：无条件先注入、触碰后按 paths 注入、不重复、失败/取消的触碰不算、预算提示 |
 | `probe.test.mjs` | 探测：三种模式的计划、`${VAR}` 展开、本地 http 端点（含 405/拒连/超时）、PATH 查找 |
+| `skill-invoke.test.mjs` | 手动调用：外壳形状、读正文、排队注入、只注入一次、拒绝路径 |
 | `middle-layer.test.mjs` | 端到端（假 ctx）：装配过滤 → 索引 → 搜索 → 调用 → 嵌套派发；改名/删除/探测/定义编辑/粘贴解析 |
 | `scope.test.mjs` | 工作区作用域列表与写层选择 |
 | `wiring.test.mjs` | 假 ctx：真跑一次 `system-prompt/assemble` waterfall 验证过滤；命令面 + 路由 + token 鉴权 + 落盘 |
