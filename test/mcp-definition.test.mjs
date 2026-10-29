@@ -2,7 +2,7 @@
 /** MCP 连接定义：校验归一化、CC 初稿、探测用的映射。 */
 
 import {
-  normalizeDefinition, templateFromCc, probeInfoFromConfig,
+  normalizeDefinition, templateFromCc, probeInfoFromConfig, parseServerInput, looksLikeConnectionConfig,
 } from '../lib/core/mcp-definition.js'
 
 let failures = 0
@@ -92,6 +92,46 @@ console.log('\nprobeInfoFromConfig')
     probeInfoFromConfig({ transport: 'stdio', command: 'node', args: ['a'], env: { B: '2' } }),
     { command: 'node', args: ['a'], env: { B: '2' } })
   check('看不懂的配置返回 undefined', probeInfoFromConfig({ transport: 'streamable-http' }), undefined)
+}
+
+console.log('\nparseServerInput')
+{
+  // 回归：粘贴一份连接 config，曾会被当成 Object.keys 解析出 transport/serverName/command/args 四个假服务器
+  const out = parseServerInput(JSON.stringify({
+    transport: 'stdio',
+    serverName: 'test',
+    command: 'cmd',
+    args: ['/c', 'npx', '-y', '@upstash/context7-mcp'],
+  }))
+  check('单个 config 只产生一台服务器', out.names, ['test'])
+  check('并带上定义', out.definitions.map((item) => item.name), ['test'])
+  check('定义已归一化', out.definitions[0].config.command, 'cmd')
+}
+{
+  const out = parseServerInput(JSON.stringify({ mcpServers: { exa: { url: 'https://mcp.exa.ai/mcp' } } }))
+  check('mcpServers 外壳取名字', out.names, ['exa'])
+  check('CC 的 url 条目转成 DSH 定义', out.definitions[0].config.transport, 'streamable-http')
+}
+{
+  const out = parseServerInput(JSON.stringify({ exa: 'off', ctx7: { command: 'cmd', args: ['/c'] } }))
+  check('名字映射两个都登记', out.names, ['exa', 'ctx7'])
+  check('带 command 的那条产生定义', out.definitions.map((item) => item.name), ['ctx7'])
+}
+{
+  check('字符串数组', parseServerInput('["a","b"]').names, ['a', 'b'])
+  check('每行一个', parseServerInput('a\nb, c').names, ['a', 'b', 'c'])
+  check('去重', parseServerInput('a, a').names, ['a'])
+  check('非法名字被过滤', parseServerInput('ok_1, bad/name, 坏名字').names, ['ok_1'])
+  check('空格算分隔符', parseServerInput('a b').names, ['a', 'b'])
+}
+{
+  throws('坏 JSON 报错', () => parseServerInput('{ nope'), 'JSON 解析失败')
+  throws('空内容报错', () => parseServerInput('   '), '内容为空')
+  throws('解析不到东西报错', () => parseServerInput('!!!'), '没有解析到')
+}
+{
+  check('识别连接配置', looksLikeConnectionConfig({ command: 'x' }), true)
+  check('名字映射不算连接配置', looksLikeConnectionConfig({ exa: 'off' }), false)
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`)

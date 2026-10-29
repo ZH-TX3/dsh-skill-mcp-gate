@@ -52,6 +52,18 @@
 **只允许改本插件自己写的条目**。`layer` 是 `cc` 的条目（只存在于 Claude Code 的定义里）两个按钮都是禁用态，
 并说明理由：那是 CC 的文件，本插件不写；要停用它请把状态设为 `off`。
 
+### 「自定义填入」认四种输入
+
+| 你粘贴的 | 结果 |
+|---|---|
+| 一份连接 config（`transport` / `command` / `url` / `serverName`） | **一台**服务器 + 它的连接定义（直接接管） |
+| `{ "mcpServers": { "name": {...} } }` | 每个名字登记；带 `command`/`url` 的顺手转成 DSH 定义 |
+| `{ "name": "off", ... }` | 只登记名字（门禁用） |
+| 每行一个 / 逗号分隔的名字 | 只登记名字 |
+
+> v0.12.1 修了一个坑：以前这里是对 JSON 取 `Object.keys`，于是粘贴一份连接 config 会得到
+> `transport` / `serverName` / `command` / `args` 四个假服务器。现在先判定输入形状再解析。
+
 ### JSON 编辑器的形状
 
 编辑器里的 JSON 直接就是 DSH `mcp-client` 的 config，两种形态：
@@ -341,7 +353,7 @@ npm test
 | `rules.test.mjs` | CC rules：frontmatter（列表/逗号/缺失/坏掉）、花括号展开与预算、glob 语义、注入规划 |
 | `rules-inject.test.mjs` | rules 注入：无条件先注入、触碰后按 paths 注入、不重复、失败/取消的触碰不算、预算提示 |
 | `probe.test.mjs` | 探测：三种模式的计划、`${VAR}` 展开、本地 http 端点（含 405/拒连/超时）、PATH 查找 |
-| `middle-layer.test.mjs` | 端到端（假 ctx）：装配过滤 → 索引 → 搜索 → 调用 → 嵌套派发；改名/删除/探测三条路由 |
+| `middle-layer.test.mjs` | 端到端（假 ctx）：装配过滤 → 索引 → 搜索 → 调用 → 嵌套派发；改名/删除/探测/定义编辑/粘贴解析 |
 | `scope.test.mjs` | 工作区作用域列表与写层选择 |
 | `wiring.test.mjs` | 假 ctx：真跑一次 `system-prompt/assemble` waterfall 验证过滤；命令面 + 路由 + token 鉴权 + 落盘 |
 | `client.test.mjs` | 假 react 执行 client.js 并直接渲染面板，断言 tab 名、分组标题、行文案真的出现在渲染树里 |

@@ -1160,3 +1160,53 @@ not this file」——`EntryTree.write()` 把整棵树 dump 回根文件，失�
   - 保存 → `created=true`、`active=["gateSelfTest"]`、profile 的 `cordis.patch.yml` md5 未变
   - 杀掉进程重启 → `active=["gateSelfTest"]`（说明 `sync()` 重建成功）
   - 删除 → `active=[]`、配置文件里 `definitions` 一并清空
+
+## 24. v0.12.1 — 「粘贴一份 config 变成四个假服务器」
+
+### 24.1 现象
+
+在「自定义填入」框里粘贴：
+
+```json
+{ "transport": "stdio", "serverName": "test", "command": "cmd", "args": ["/c", "npx", "-y", "@upstash/context7-mcp"] }
+```
+
+结果 MCP 列表里多出 `transport`、`serverName`、`command`、`args` 四台服务器。
+
+### 24.2 根因
+
+旧实现把粘贴内容当成「名字 → 配置」的映射，直接 `Object.keys()`：
+
+```js
+const block = parsed && parsed.mcpServers ? parsed.mcpServers : parsed
+names = Object.keys(block)   // ← 这里
+```
+
+一份连接 config 的顶层键恰好都是合法名字字符，于是四个键都通过名字正则，变成四台服务器。
+用户视角是「解析有问题」，实际是**没有判定输入形状**。
+
+### 24.3 修法：先分类，再解析
+
+`core/mcp-definition.js` 新增 `parseServerInput(text)`，按形状分四种（纯函数，可单测）：
+
+| 输入 | 判定 | 产物 |
+|---|---|---|
+| 单个连接 config（含 `transport`/`command`/`url`/`serverName`） | `looksLikeConnectionConfig()` | 一台服务器 + 归一化后的定义 |
+| `{ mcpServers: {...} }` 或 `{ name: {...} }` | 名字映射 | 名字逐个登记；带 `command`/`url` 的转成 DSH 定义 |
+| 字符串数组 / 每行一个 / 逗号分隔 | 名字列表 | 只有名字 |
+| 其它 JSON | 报错（`没找到服务器名或连接定义`） | — |
+
+配套改动：`addServers` 变成 async（要顺手建运行期连接），路由改成 `await`；
+错误信息仍然带下一步（`JSON 解析失败：...` / `没有解析到合法的服务器名或连接定义`）。
+
+### 24.4 遗留数据
+
+用户配置里已经写进了四条假记录（`transport: on`、`serverName: on`、`command: deferred`、`args: on`），
+用 `io.removeServer()` 逐条删掉；`skills` 段未受影响。这类脏数据不会自愈，所以修 bug 之后要清理。
+
+### 24.5 验证
+
+- `test/mcp-definition.test.mjs`：单 config 只产出一台、`mcpServers` 外壳、名字映射、
+  字符串数组、每行一个、去重、非法名过滤、坏 JSON、空内容、形状识别
+- `test/middle-layer.test.mjs`：真跑 `/mcp/add` 粘贴一份 config → 只加一台、定义落盘、顺手建了运行期连接；
+  并显式断言名字里**没有** `transport`/`serverName`/`command`/`args`

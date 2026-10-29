@@ -23,7 +23,7 @@ import { agentCwd, toolNames, workspaceList } from './lib/platform/observe.js'
 import { groupToolsByServer } from './lib/core/mcp-policy.js'
 import { runProbe } from './lib/platform/probe.js'
 import { createMcpConnections } from './lib/platform/mcp-connections.js'
-import { normalizeDefinition, probeInfoFromConfig, templateFromCc } from './lib/core/mcp-definition.js'
+import { normalizeDefinition, parseServerInput, probeInfoFromConfig, templateFromCc } from './lib/core/mcp-definition.js'
 import { createSkillProvider } from './lib/platform/provider.js'
 import { createCatalogGate } from './lib/platform/catalog.js'
 import { createMcpFilter } from './lib/platform/mcp-filter.js'
@@ -178,38 +178,34 @@ export function apply(ctx, config = {}) {
     reload(ws)
   }
 
-  /** 自定义填入：从粘贴内容里提取服务器名。 */
-  function parseServerNames(text) {
-    const raw = String(text ?? '').trim()
-    if (raw.length === 0) throw new Error('内容为空')
-    let names = []
-    if (raw.startsWith('{') || raw.startsWith('[')) {
-      let parsed
-      try {
-        parsed = JSON.parse(raw)
-      } catch (error) {
-        throw new Error(`JSON 解析失败：${error.message}`)
-      }
-      const block = parsed && parsed.mcpServers ? parsed.mcpServers : parsed
-      if (!block || typeof block !== 'object' || Array.isArray(block)) {
-        throw new Error('没找到 mcpServers 对象')
-      }
-      names = Object.keys(block)
-    } else {
-      const SEP = new RegExp('[,' + String.fromCharCode(10, 13, 9, 32) + ']+')
-      names = raw.split(SEP).map((line) => line.trim()).filter(Boolean)
-    }
-    const cleaned = [...new Set(names.filter((serverName) => /^[A-Za-z0-9_.-]{1,64}$/.test(serverName)))]
-    if (cleaned.length === 0) throw new Error('没有解析到合法的服务器名')
-    return cleaned
-  }
-
-  function addServers(text, workspaceKey) {
-    const names = parseServerNames(text)
+  /**
+   * 自定义填入：名字只登记门禁；带连接参数的定义会落盘并立刻接管。
+   * 输入形状由 core/mcp-definition.js 的 parseServerInput 判定。
+   */
+  async function addServers(text, workspaceKey) {
+    const parsed = parseServerInput(text)
     const { ws, file } = writeTarget(workspaceKey)
-    addServerNames(file, names)
+    addServerNames(file, parsed.names)
+    for (const item of parsed.definitions) setDefinition(file, item.name, item.config)
     reload(ws)
-    return { names, file, workspace: ws }
+
+    const connected = []
+    for (const item of parsed.definitions) {
+      try {
+        await connections.upsert(item.config)
+        connected.push(item.name)
+      } catch (error) {
+        warn(`接管 ${item.name} 失败: ${error.message}`)
+      }
+    }
+    return {
+      names: parsed.names,
+      definitions: parsed.definitions.map((item) => item.name),
+      connected,
+      warnings: parsed.warnings ?? [],
+      file,
+      workspace: ws,
+    }
   }
 
   /** 只允许改「本插件自己写的」条目；CC 的定义一律不碰。 */

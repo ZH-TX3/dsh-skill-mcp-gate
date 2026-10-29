@@ -312,6 +312,18 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   const againDef = await callJson('/mcp/undefine', { server: 'ccOnly' })
   check('重复删除报错', againDef.status, 400)
   check('并说明没有这条定义', String(againDef.body.error).includes('本插件里没有'), true)
+
+  // 回归：在「自定义填入」里粘贴一份连接 config，曾经被拆成 transport/serverName/command/args 四个假服务器
+  const pasted = await callJson('/mcp/add', {
+    text: JSON.stringify({ transport: 'stdio', serverName: 'pasteTest', command: 'cmd', args: ['/c', 'npx', '-y', 'pkg'] }),
+  })
+  check('粘贴单个 config 只加一台', pasted.body.names, ['pasteTest'])
+  check('名字里没有 transport 之类的假条目',
+    pasted.body.names.some((n) => ['transport', 'serverName', 'command', 'args'].includes(n)), false)
+  check('定义被落盘', pasted.body.definitions, ['pasteTest'])
+  check('顺手建了运行期连接', [loaderEntries.size, pasted.body.connected], [1, ['pasteTest']])
+  const savedConfig = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
+  check('配置里存的是连接定义', savedConfig.mcp.definitions.pasteTest.command, 'cmd')
 }
 
 rmSync(home, { recursive: true, force: true })
