@@ -58,9 +58,10 @@ console.log('\n作用域')
   check('user scope 收到', cc.servers.get('exa').scope, 'user')
   check('local scope 按路径匹配（大小写/斜杠无关）', cc.servers.get('chrome-devtools').scope, 'local')
   check('别的项目不混进来', cc.servers.has('ignored'), false)
-  check('project scope 收到', cc.servers.get('filesystem').scope, 'project')
-  check('服务器总数', [...cc.servers.keys()].sort(), ['chrome-devtools', 'context7', 'exa', 'filesystem', 'github'])
-  check('读到的文件数', cc.files.length, 4)
+  // `<cwd>/.mcp.json` 现在由本插件按「项目定义」处理，不再算「仅 CC 声明」
+  check('项目 .mcp.json 不进 CC 基线', cc.servers.has('filesystem'), false)
+  check('服务器总数', [...cc.servers.keys()].sort(), ['chrome-devtools', 'context7', 'exa'])
+  check('读到的文件数（不含 .mcp.json）', cc.files.length, 3)
   check('无警告', warnings, [])
 }
 
@@ -68,20 +69,18 @@ console.log('\n批准语义')
 {
   check('enableAll 生效（最高层胜出）', cc.enableAll, true)
   check('user 作用域不需要批准', cc.servers.get('exa').approved, false) // 被拒绝 → 不批准
-  check('拒绝压过 enabled 与 enableAll', cc.servers.get('filesystem').rejected, true)
-  check('被拒绝即不批准', cc.servers.get('filesystem').approved, false)
-  check('被 enabled 批准的 project 服务器', cc.servers.get('github').approved, true)
   check('local 作用域默认批准', cc.servers.get('chrome-devtools').approved, true)
+  check('disabled 名单仍然被读进来', cc.disabled.has('filesystem'), true)
+  check('enabled 名单仍然被读进来', cc.enabled.has('github'), true)
 }
 
 console.log('\n归一化到基线层')
 {
   const baseline = buildBaseline(cc)
   check('被 CC 拒绝的默认 off', baseline.get('exa').state, 'off')
-  check('被 CC 拒绝的 project 服务器也 off', baseline.get('filesystem').state, 'off')
   check('其余默认 on', baseline.get('context7').state, 'on')
-  check('基线层标记', baseline.get('github').layer, 'cc')
-  check('基线带作用域', baseline.get('github').ccScope, 'project')
+  check('基线层标记', baseline.get('context7').layer, 'cc')
+  check('基线带作用域', baseline.get('context7').ccScope, 'user')
   check('空输入返回空表', buildBaseline(null).size, 0)
 }
 
@@ -90,8 +89,7 @@ console.log('\n同名覆盖（越具体越优先）')
   const h2 = mkdtempSync(join(tmpdir(), 'gate-cc-home2-'))
   const c2 = mkdtempSync(join(tmpdir(), 'gate-cc-proj2-'))
   writeJson(join(h2, '.claude.json'), { mcpServers: { shared: {} } })
-  writeJson(join(c2, '.mcp.json'), { mcpServers: { shared: {} } })
-  check('project 压过 user', readClaudeMcp({ cwd: c2, home: h2 }).servers.get('shared').scope, 'project')
+  check('只有 user 声明时是 user', readClaudeMcp({ cwd: c2, home: h2 }).servers.get('shared').scope, 'user')
   // local 更具体，但要它存在才有意义：单独验一次
   const h3 = mkdtempSync(join(tmpdir(), 'gate-cc-home3-'))
   const c3 = mkdtempSync(join(tmpdir(), 'gate-cc-proj3-'))

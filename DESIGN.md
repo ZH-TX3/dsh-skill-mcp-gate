@@ -1456,3 +1456,45 @@ POST /api/skill-mcp-gate/skill/content    → 401   （这个进程里没有这�
   - 切到工作区 B → `managed=[]`、运行期连接 `[]`（被回收）
   - 切回 A → 运行期连接 `["liveTest"]`（重新接管）
 - `npm test` 19 套件 617 项全绿
+
+## 32. v0.14.1 — 「始终用不了」与「一关就消失」
+
+用户实测两条症状，各自对应一个真 bug。
+
+### 32.1 始终连不上：条目名字写错了
+
+`/state` 里 `active: ["iostest"]`、`managed: ["iostest"]` 都对，但工具永远不出现，启动日志只有
+`mcp-client: failed to import`。
+
+根因：`createMcpConnections` 用 `PLUGIN_NAME = 'mcp-client'` 作为 loader 条目的 `name`。
+loader 用这个字符串去 **import 插件模块**，裸 `mcp-client` 解析不到（真实包名是
+`@deepseek-ai/dsh-mcp-client`）。于是条目建了、provider 名字对、但模块导入失败 —— 表现就是
+「看着有，永远不通」。
+
+修法：`PLUGIN_NAME = '@deepseek-ai/dsh-mcp-client'`（实测可解析，见 patch 里
+`name: "@deepseek-ai/dsh-api-terminal-controller"` 的同类写法）。
+修完实测日志出现 `Context7 Documentation MCP Server v4.4.4 running on stdio`，`tools=2`。
+
+### 32.2 一关就消失：`.mcp.json` 被当成「仅 CC 声明」
+
+`cc/mcp.js` 之前把 `<cwd>/.mcp.json` 也读进 CC 基线，于是同名的项目定义会被它「占位」：
+
+- 面板把它归到**「仅 Claude Code 声明」组**（默认折叠）→ 平时根本看不到
+- 关一下（写入本插件的门禁状态）之后，`layer` 从 `cc` 变成 `project`，行**换了组**：
+  从折叠组「消失」，出现在顶部的本项目组 → 体感就是「关一下就没了 / 像被删了」
+- 顺带还有个副作用：`layer === 'cc'` 的条目不允删，removal 会被拒
+
+修法：`.mcp.json` 不再进 CC 基线，由 `load.js` 按**项目定义**处理（v0.14.0 已经这么读了）。
+现在它稳定落在「本项目 MCP」组，开关前后都在同一组，也能正常删除。
+
+### 32.3 验证（真实实例）
+
+```
+开机日志:      Context7 Documentation MCP Server v4.4.4 running on stdio
+/state:        iostest(on, project, tools=2)          ← 工具真的出现了
+关闭 →        iostest(off, project)                   ← 行还在同一组
+再打开 →      iostest(on,  project)，配置文件 servers 清空（状态来自定义）
+```
+
+`npm test` 19 套件 615 项全绿（claude-mcp 的断言改成「.mcp.json 不进 CC 基线」，
+middle-layer 的插件名断言改成可解析包名）。
