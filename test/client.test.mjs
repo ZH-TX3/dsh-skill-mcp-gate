@@ -277,10 +277,10 @@ console.log('JSON 编辑器')
   check('出现保存按钮', out.includes('保存并热加载'), true)
   check('出现恢复按钮', out.includes('恢复为 CC 定义'), true)
   check('删除按钮统一在动作行里（编辑器里不再重复一个）', out.includes('删除 DSH 连接'), false)
-  check('说明保存会接管连接', out.some((t) => t.includes('mcp-client')), true)
+  check('说明保存落点与接管', out.some((t) => t.includes('.mcp.json')), true)
 
-  const managed = render(mcpHooks({ expanded: { exa: true }, actionsOpen: { exa: true }, editor: { ...editorState, source: 'plugin', managed: true } }))
-  check('已代管时提示插件代管', managed.some((t) => t.includes('本插件代管的连接')), true)
+  const managed = render(mcpHooks({ expanded: { exa: true }, actionsOpen: { exa: true }, editor: { ...editorState, source: 'mcp.json', managed: true } }))
+  check('已代管时说明来自 .mcp.json', managed.some((t) => t.includes('Claude Code 也读同一个文件')), true)
 }
 
 console.log('工具展开')

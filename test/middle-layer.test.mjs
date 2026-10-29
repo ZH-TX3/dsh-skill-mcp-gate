@@ -302,8 +302,12 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('快照标出插件代管', saved.body.state.mcp.connections.managed, ['ccOnly'])
   const ccOnlyRow = saved.body.state.mcp.servers.find((srv) => srv.name === 'ccOnly')
   check('只有定义也能在面板上看到（补门禁状态）', ccOnlyRow?.state, 'on')
+  check('写进项目级 .mcp.json', saved.body.kind, 'mcp.json')
+  const mcpJson = JSON.parse(readFileSync(join(ws, '.mcp.json'), 'utf8'))
+  check('用的是 Claude Code 的形状', mcpJson.mcpServers.ccOnly.type, 'http')
+  check('url 一致', mcpJson.mcpServers.ccOnly.url, 'http://127.0.0.1:1/mcp')
   const ownConfig = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
-  check('定义真的落到本插件配置里', ownConfig.mcp.definitions.ccOnly.url, 'http://127.0.0.1:1/mcp')
+  check('本插件配置里不再重复存一份', ownConfig.mcp?.definitions?.ccOnly, undefined)
 
   const probeManaged = await callJson('/mcp/probe', { server: 'ccOnly' })
   check('探测优先用 DSH 配置（仍是 http）', probeManaged.body.probe.mode, 'http')
@@ -321,8 +325,8 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('删除连接成功', removedDef.body.ok, true)
   check('loader 条目清空', loaderEntries.size, 0)
   check('快照里不再代管', removedDef.body.state.mcp.connections.managed, [])
-  const afterDelete = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
-  check('配置里的定义也删掉了', afterDelete.mcp?.definitions?.ccOnly, undefined)
+  const afterDelete = JSON.parse(readFileSync(join(ws, '.mcp.json'), 'utf8'))
+  check('.mcp.json 里的定义也删掉了', afterDelete.mcpServers?.ccOnly, undefined)
 
   // 回归：只删门禁条目时，定义还在 → load 会把服务器又补回列表（看起来删不掉）
   const pastedForDelete = await callJson('/mcp/add', {
@@ -349,8 +353,10 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
     pasted.body.names.some((n) => ['transport', 'serverName', 'command', 'args'].includes(n)), false)
   check('定义被落盘', pasted.body.definitions, ['pasteTest'])
   check('顺手建了运行期连接', [loaderEntries.size, pasted.body.connected], [1, ['pasteTest']])
-  const savedConfig = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
-  check('配置里存的是连接定义', savedConfig.mcp.definitions.pasteTest.command, 'cmd')
+  const savedMcpJson = JSON.parse(readFileSync(join(ws, '.mcp.json'), 'utf8'))
+  check('粘贴的定义也写进 .mcp.json（CC 形状）', savedMcpJson.mcpServers.pasteTest.command, 'cmd')
+  check('门禁条目写在项目配置里',
+    JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8')).mcp.servers.pasteTest, 'on')
 }
 
 console.log('skill 读取与手动调用')
@@ -388,6 +394,48 @@ console.log('skill 读取与手动调用')
   check('off 的技能不能手动调用', offInvoke.status, 400)
   check('并说明怎么恢复', String(offInvoke.body.error).includes('仅手动'), true)
   await callJson('/skill', { name: 'demo', state: 'on' })
+}
+
+console.log('')
+console.log('切换工作区：只保留当前项目的连接')
+{
+  const tokenRoute = routes.find((r) => r.path.endsWith('/token'))
+  let token = null
+  tokenRoute.handler({}, { statusCode: 200, setHeader() {}, end(body) { token = JSON.parse(body).token } })
+  const post = (suffix, payload) => new Promise((resolve, reject) => {
+    const route = routes.find((r) => r.path.endsWith(suffix))
+    if (!route) return reject(new Error(`没有路由 ${suffix}`))
+    const timer = setTimeout(() => reject(new Error(`${suffix} 没写响应`)), 5000)
+    const handlers = {}
+    const req = { method: 'POST', headers: { 'x-gate-token': token }, url: '/', on(event, fn) { handlers[event] = fn } }
+    const res = { statusCode: 200, setHeader() {}, end(chunk) { clearTimeout(timer); resolve({ status: this.statusCode, body: JSON.parse(chunk) }) } }
+    route.handler(req, res)
+    handlers.data?.(JSON.stringify(payload ?? {}))
+    handlers.end?.()
+  })
+  const getState = (target) => new Promise((resolve, reject) => {
+    const route = routes.find((r) => r.path.endsWith('/state'))
+    const timer = setTimeout(() => reject(new Error('state 没写响应')), 5000)
+    const res = { statusCode: 200, setHeader() {}, end(chunk) { clearTimeout(timer); resolve(JSON.parse(chunk)) } }
+    route.handler({ method: 'GET', headers: {}, url: `/api/skill-mcp-gate/state?ws=${encodeURIComponent(target)}` }, res)
+  })
+
+  const wsB = mkdtempSync(join(tmpdir(), 'gate-mid-wsb-'))
+  mkdirSync(join(wsB, '.dsh'), { recursive: true })
+
+  const saved = await post('/mcp/define', {
+    server: 'switchTest',
+    json: JSON.stringify({ serverName: 'switchTest', transport: 'streamable-http', url: 'http://127.0.0.1:1/x' }),
+  })
+  check('在本项目里建了一条连接', saved.body.state.mcp.connections.managed.includes('switchTest'), true)
+  check('写进项目级 .mcp.json', saved.body.kind, 'mcp.json')
+  check('运行期有它', [...loaderEntries.values()].some((e) => e.options.config.serverName === 'switchTest'), true)
+
+  const stateB = await getState(wsB)
+  check('切到另一个项目后不再代管它', stateB.mcp.connections.managed, [])
+  check('切走时连接被回收', loaderEntries.size, 0)
+
+  rmSync(wsB, { recursive: true, force: true })
 }
 
 rmSync(home, { recursive: true, force: true })

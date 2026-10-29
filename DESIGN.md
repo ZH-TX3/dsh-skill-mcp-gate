@@ -1416,3 +1416,43 @@ POST /api/skill-mcp-gate/skill/content    → 401   （这个进程里没有这�
 
 `test/client.test.mjs`：`hasContentApi=false` 时按钮不出现且页脚有说明；`=true` 时按钮出现。
 `npm test` 17 套件 597 项全绿。
+
+## 31. v0.14.0 — 项目级 `.mcp.json` + 按工作区激活
+
+### 31.1 两个缺口
+
+1. **文件形态不同**：我们原本把定义存在自己的项目配置里，CC 不认；两边的 MCP 各活一份。
+2. **切工作区不重算**：运行期连接只在启动/保存时 sync，切到别的项目后旧连接还挂着。
+
+### 31.2 现在的分工
+
+| 内容 | 位置 |
+|---|---|
+| 门禁状态（on/deferred/off、逐工具） | 本插件配置 `mcp.servers` |
+| **项目级**连接定义 | **`<ws>/.mcp.json`**（CC 形状，同一个文件 CC 也读） |
+| **全局**连接定义 | 本插件全局配置 `mcp.definitions` |
+
+写盘路由（`writeDefinition`）是唯一入口：项目作用域写 `.mcp.json`（`toCcServer` 把 DSH config
+转成 `{type:'http'|'stdio', ...}`），全局作用域写本插件配置；写完顺手把另一处的同名定义清掉，
+避免一台服务器两份定义。`/mcp/add` 粘贴进来的连接也走同一条路。
+
+### 31.3 按工作区激活
+
+`connections.sync(definitions)` 除了「缺的建、变的改」，现在还会**回收**：本进程里由我们建过
+（`createdNames`）、但当前工作区定义里已经没有的连接，直接 `remove`。切换工作区时
+`select → reload → sync` 触发一次重算。
+
+只回收自己建过的条目 —— 进程里可能还有 `dsh-mcp-connector` 这类第三方插件建的 `mcp-client`，
+不能碰。
+
+### 31.4 验证
+
+- `test/mcp-json.test.mjs`：CC 形状互转、增删保留其它服务器与其它键、删空清键
+- `test/middle-layer.test.mjs`：保存落进 `.mcp.json`（`type: http`）；本插件配置不留副本；
+  粘贴 config 也写 `.mcp.json`；切换工作区后 `managed=[]` 且运行期连接归零
+- **真实实例（3099）**：
+  - 选空工作区 A → 保存 `liveTest` → `kind=mcp.json`，文件内容
+    `{"mcpServers":{"liveTest":{"type":"http","url":"http://127.0.0.1:1/mcp"}}}`，运行期连接 `["liveTest"]`
+  - 切到工作区 B → `managed=[]`、运行期连接 `[]`（被回收）
+  - 切回 A → 运行期连接 `["liveTest"]`（重新接管）
+- `npm test` 19 套件 617 项全绿

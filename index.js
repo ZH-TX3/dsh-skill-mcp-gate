@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { GLOBAL_WS, loadWorkspace } from './lib/load.js'
-import { configPaths } from './lib/paths.js'
+import { claudeMcpProjectFile, configPaths } from './lib/paths.js'
 import { planListing } from './lib/core/listing.js'
 import { assertMcpState, assertMcpToolState, assertSkillState } from './lib/core/policy.js'
 import { agentCwd, liveAgents, toolNames, workspaceList } from './lib/platform/observe.js'
@@ -36,8 +36,10 @@ import { createSnapshotter } from './lib/host/snapshot.js'
 import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
 import {
-  addServerNames, removeDefinition, removeServer, renameServer, setDefinition, setServerState, setSkillState, setToolState,
+  addServerNames, readJsonFile, removeDefinition, removeServer, renameServer, setDefinition,
+  setServerState, setSkillState, setToolState, writeJsonFile,
 } from './lib/io.js'
+import { withServer, withoutServer } from './lib/cc/mcp-json.js'
 
 export const name = 'skill-mcp-gate'
 
@@ -193,7 +195,7 @@ export function apply(ctx, config = {}) {
     const parsed = parseServerInput(text)
     const { ws, file } = writeTarget(workspaceKey)
     addServerNames(file, parsed.names)
-    for (const item of parsed.definitions) setDefinition(file, item.name, item.config)
+    for (const item of parsed.definitions) writeDefinition(item.config, item.name)
     reload(ws)
 
     const connected = []
@@ -240,7 +242,10 @@ export function apply(ctx, config = {}) {
     }
     let configRemoved = 0
     if (entry && removeServer(entry.file, serverName)) configRemoved += 1
-    if (owned && removeDefinition(owned.file, serverName)) configRemoved += 1
+    if (owned) {
+      const dropped = dropDefinitionEverywhere(serverName)
+      configRemoved += dropped.length
+    }
     const connectionRemoved = Boolean(connections.remove(serverName))
     reload(current.workspace)
     log('删除服务器', serverName, { configRemoved, connectionRemoved })
@@ -293,11 +298,81 @@ export function apply(ctx, config = {}) {
     return current?.claudeMcp?.servers.find((item) => item.name === serverName)?.definition
   }
 
+  /**
+   * 定义写哪儿：
+   *   项目工作区 → `<ws>/.mcp.json`（与 Claude Code 共用同一个文件）
+   *   全局       → 本插件的全局配置 `mcp.definitions`
+   */
+  function definitionTarget() {
+    const ws = current?.workspace
+    if (ws && ws !== GLOBAL_WS) {
+      return { ws, file: claudeMcpProjectFile(ws), kind: 'mcp.json' }
+    }
+    const target = writeTarget()
+    return { ws: target.ws, file: target.file, kind: 'plugin' }
+  }
+
+  /** 从所有可能的定义来源里删掉一条（.mcp.json + 本插件全局/项目配置）。 */
+  function dropDefinitionEverywhere(serverName, { includeMcpJson = true } = {}) {
+    const files = []
+    const ws = current?.workspace
+    if (includeMcpJson && ws && ws !== GLOBAL_WS) {
+      const mcpFile = claudeMcpProjectFile(ws)
+      const doc = readJsonFile(mcpFile)
+      const next = doc ? withoutServer(doc, serverName) : undefined
+      if (next) {
+        writeJsonFile(mcpFile, next)
+        files.push(mcpFile)
+      }
+    }
+    const candidates = [
+      files.globalFile,
+      current?.workspace && current.workspace !== GLOBAL_WS ? configPaths({ projectDir: current.workspace }).projectFile : null,
+    ].filter(Boolean)
+    for (const file of new Set(candidates)) {
+      if (removeDefinition(file, serverName)) files.push(file)
+    }
+    return files
+  }
+
+  /**
+   * 把一份定义写到当前项目对应的位置：
+   *   项目 → `<ws>/.mcp.json`（CC 形状，两边共用）
+   *   全局 → 本插件全局配置
+   * @param previousName 改名前的名字；给了就从旧名字位置清掉
+   */
+  function writeDefinition(config, previousName) {
+    const target = definitionTarget()
+    if (target.kind === 'mcp.json') {
+      const doc = readJsonFile(target.file) ?? {}
+      let next = withServer(doc, config.serverName, config)
+      if (previousName && previousName !== config.serverName) {
+        next = withoutServer(next, previousName) ?? next
+      }
+      writeJsonFile(target.file, next)
+      // 同一台服务器不要在本插件配置里再留一份（刚写的 .mcp.json 不能删）
+      dropDefinitionEverywhere(config.serverName, { includeMcpJson: false })
+      if (previousName && previousName !== config.serverName) {
+        dropDefinitionEverywhere(previousName, { includeMcpJson: false })
+      }
+    } else {
+      if (previousName && previousName !== config.serverName) removeDefinition(target.file, previousName)
+      setDefinition(target.file, config.serverName, config)
+    }
+    return target
+  }
+
   /** 编辑器要显示的 JSON：优先本插件代管的定义，否则用 CC 的定义当模板。 */
   function getDefinition(serverName) {
     const owned = current?.definitions?.get(serverName)
     if (owned) {
-      return { server: serverName, managed: true, config: owned.config, source: 'plugin', file: owned.file }
+      return {
+        server: serverName,
+        managed: true,
+        config: owned.config,
+        source: owned.source === 'mcp.json' || owned.file?.endsWith('.mcp.json') ? 'mcp.json' : 'plugin',
+        file: owned.file,
+      }
     }
     const template = templateFromCc(serverName, ccDefinitionOf(serverName))
     return {
@@ -321,22 +396,20 @@ export function apply(ctx, config = {}) {
       parsed = json
     }
     const config = normalizeDefinition({ ...parsed, serverName: parsed?.serverName ?? serverName })
-    const { ws, file } = writeTarget()
-    // 改名 = 删旧存新，避免留下两条指向同一台服务器的连接
-    if (config.serverName !== serverName) removeDefinition(file, serverName)
-    setDefinition(file, config.serverName, config)
-    reload(ws)
+    const target = writeDefinition(config, serverName)
+    reload(target.ws)
     const result = await connections.upsert(config)
-    return { ...result, config, file, workspace: ws }
+    return { ...result, config, file: target.file, workspace: target.ws, kind: target.kind }
   }
 
   async function deleteDefinition(serverName) {
     const owned = current?.definitions?.get(serverName)
     if (!owned) throw new Error(`本插件里没有 "${serverName}" 的连接定义`)
-    if (!removeDefinition(owned.file, serverName)) throw new Error(`删除失败：${owned.file} 里没有这条定义`)
+    const filesRemovedFrom = dropDefinitionEverywhere(serverName)
+    if (filesRemovedFrom.length === 0) throw new Error(`删除失败：没找到 "${serverName}" 的定义，可能已经被删掉了`)
     reload(current.workspace)
     const removedId = connections.remove(serverName)
-    return { id: removedId ?? null, file: owned.file }
+    return { id: removedId ?? null, files: filesRemovedFrom }
   }
 
   /** 启动 / 保存后：把配置里的定义灌进 loader。 */
@@ -402,7 +475,10 @@ export function apply(ctx, config = {}) {
   const routes = createRoutes({
     token,
     snapshot,
-    select: (ws) => reload(ws),
+    select: async (ws) => {
+      reload(ws)
+      await syncConnections()
+    },
     reload: (ws) => reload(ws),
     setSkill,
     setServer,
