@@ -227,6 +227,7 @@ console.log('' + '\n条目管理：改名 / 删除 / 探测')
   })
 
   const renamed = await callJson('/mcp/rename', { from: 'exa', to: 'exa2' })
+  check('改名成功返回新名字', renamed.body.to, 'exa2')
   check('改名返回 ok', renamed.body.ok, true)
   check('改名后快照里有新名字', renamed.body.state.mcp.servers.some((srv) => srv.name === 'exa2'), true)
   // 只搬「赢的那一层」：项目层改了名，全局层还有同名条目，所以 exa 仍在列表里
@@ -246,6 +247,7 @@ console.log('' + '\n条目管理：改名 / 删除 / 探测')
 
   const removed = await callJson('/mcp/remove', { server: 'exa2' })
   check('删除返回 ok', removed.body.ok, true)
+  check('删除同时清掉配置与运行期连接信息', [removed.body.configRemoved >= 1, 'connectionRemoved' in removed.body], [true, true])
   check('删除后快照里没有它', removed.body.state.mcp.servers.some((srv) => srv.name === 'exa2'), false)
 
   const again = await callJson('/mcp/remove', { server: 'exa2' })
@@ -310,6 +312,18 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('快照里不再代管', removedDef.body.state.mcp.connections.managed, [])
   const afterDelete = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
   check('配置里的定义也删掉了', afterDelete.mcp?.definitions?.ccOnly, undefined)
+
+  // 回归：只删门禁条目时，定义还在 → load 会把服务器又补回列表（看起来删不掉）
+  const pastedForDelete = await callJson('/mcp/add', {
+    text: JSON.stringify({ transport: 'stdio', serverName: 'wipeMe', command: 'cmd', args: ['/c'] }),
+  })
+  check('先加一台带定义的服务器', pastedForDelete.body.names, ['wipeMe'])
+  const wiped = await callJson('/mcp/remove', { server: 'wipeMe' })
+  check('删除后列表里不再有它', wiped.body.state.mcp.servers.some((srv) => srv.name === 'wipeMe'), false)
+  check('删除后不再被代管', wiped.body.state.mcp.connections.managed.includes('wipeMe'), false)
+  const wipeFile = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
+  check('定义与门禁条目都不在了',
+    [wipeFile.mcp?.definitions?.wipeMe, wipeFile.mcp?.servers?.wipeMe], [undefined, undefined])
 
   const againDef = await callJson('/mcp/undefine', { server: 'ccOnly' })
   check('重复删除报错', againDef.status, 400)

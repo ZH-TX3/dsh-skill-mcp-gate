@@ -1222,3 +1222,57 @@ names = Object.keys(block)   // ← 这里
 门禁状态只是它的一个维度，缺省就是 `on`。
 
 顺带把用户配置里残留的四条假记录（`transport` / `serverName` / `command` / `args`）删干净。
+
+## 26. v0.12.3 — 「删了还在」：删除只删了一半
+
+### 26.1 现象与根因
+
+用户加了项目级 MCP，点删除后：报错看不懂（`"x" 不在 C:\...\skill-mcp-gate.json 里`），
+或者干脆删不掉、列表里又出现。
+
+根因是**一台服务器在本插件里有三份痕迹**，而删除只动了其中一份：
+
+| 痕迹 | 存在哪 |
+|---|---|
+| 门禁条目 | `mcp.servers.<name>` |
+| 连接定义 | `mcp.definitions.<name>` |
+| 运行期连接 | loader 里的 `mcp-client` 条目 |
+
+旧实现只删门禁条目；`load.js` 又会因为「有定义」把服务器补回列表（v0.12.2 加的行为），
+于是表现成「删了还在」。
+
+错误消息还把内部文件路径直接抛给用户，看不懂是必然的。
+
+### 26.2 现在的语义
+
+**删除 = 删掉这台服务器在本插件里的一切**，并且回报删了几处：
+
+```json
+{ "configRemoved": 2, "connectionRemoved": true, "stillDeclaredByCc": false }
+```
+
+- `configRemoved`：实际清掉的文件条目数（门禁 1 处 + 定义 1 处 = 2）
+- `connectionRemoved`：是否真的断掉运行期连接
+- `stillDeclaredByCc`：它是否仍来自 Claude Code —— 是的话面板会说明「要停用请关掉开关」，
+  因为 CC 的定义我们不改，删完它还会回来
+
+只在**本插件完全没有痕迹**时才拒绝，话术改成用户能懂的：
+
+> `"xxx" 只存在于 Claude Code 的定义里，本插件没有可删的配置。要停用它，把这一行的开关关掉就行。`
+
+改名同理：门禁条目、定义里的 `serverName`、运行期连接三处一起搬（否则名字对不上，工具前缀会错）。
+
+### 26.3 前端
+
+- 动作行里只剩一个「删除」，确认框写清「会删什么、不会动什么」
+- 删完在行内给一句结果：`已删除：配置 2 处，运行期连接已断开。`
+- 编辑器里那个重复的「删除 DSH 连接」去掉了（它和删除是同一件事）
+
+### 26.4 验证
+
+- `test/middle-layer.test.mjs`：加一台带定义的服务器 → 删除 → 列表消失、代管列表消失、
+  配置文件里 `servers` 与 `definitions` 都不在；改名返回新名字
+- **真实实例（3099，项目级工作区）**：
+  - `/mcp/add` 粘一份 config → `names=["wipeMe"]`、`definitions=["wipeMe"]`、`connected=["wipeMe"]`、`layer=project`
+  - `/mcp/remove` → `configRemoved=2`、`connectionRemoved=true`、`stillDeclaredByCc=false`，列表与配置文件都清干净
+- `npm test` 16 套件 544 项全绿

@@ -231,7 +231,7 @@ console.log('JSON 编辑器')
   check('出现编辑 JSON 按钮', out.includes('编辑 JSON'), true)
   check('出现保存按钮', out.includes('保存并热加载'), true)
   check('出现恢复按钮', out.includes('恢复为 CC 定义'), true)
-  check('没有 DSH 配置时禁止删除连接', out.includes('删除 DSH 连接'), true)
+  check('删除按钮统一在动作行里（编辑器里不再重复一个）', out.includes('删除 DSH 连接'), false)
   check('说明保存会接管连接', out.some((t) => t.includes('mcp-client')), true)
 
   const managed = render(['mcps', S, null, null, { exa: true }, null, '', null, { exa: true }, {}, { ...editorState, source: 'plugin', managed: true }])

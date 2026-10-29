@@ -208,36 +208,62 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  /** 只允许改「本插件自己写的」条目；CC 的定义一律不碰。 */
-  function ownEntry(serverName) {
+  /** 这台服务器在本插件里/在 CC 里各有什么。 */
+  function footprintOf(serverName) {
     const entry = current?.servers.get(serverName)
-    if (!entry) throw new Error(`没有 "${serverName}" 这条记录`)
-    if (entry.layer === 'cc') {
-      throw new Error(`"${serverName}" 的定义来自 Claude Code，本插件不改 CC 的文件；要停用它请把状态设为 off`)
+    const owned = current?.definitions?.get(serverName)
+    const ccInfo = current?.claudeMcp?.servers.find((item) => item.name === serverName)
+    return {
+      entry: entry && entry.layer !== 'cc' ? entry : null,
+      owned: owned ?? null,
+      cc: ccInfo ?? null,
     }
-    return entry
   }
 
-  function removeServerEntry(serverName) {
-    const entry = ownEntry(serverName)
-    if (!removeServer(entry.file, serverName)) {
-      throw new Error(`"${serverName}" 不在 ${entry.file} 里，可能已被其它地方移除了`)
+  /**
+   * 删除 = 删掉这台服务器在**本插件里的一切**：门禁条目 + 连接定义 + 运行期连接。
+   * 只删一半会「点了没反应」：定义还在，load 时又会把它补回列表。
+   */
+  async function removeServerEntry(serverName) {
+    const { entry, owned, cc } = footprintOf(serverName)
+    if (!entry && !owned) {
+      throw new Error(cc
+        ? `"${serverName}" 只存在于 Claude Code 的定义里，本插件没有可删的配置。要停用它，把这一行的开关关掉就行。`
+        : `找不到 "${serverName}" 的配置，可能已经被删掉了。刷新面板看看。`)
     }
+    let configRemoved = 0
+    if (entry && removeServer(entry.file, serverName)) configRemoved += 1
+    if (owned && removeDefinition(owned.file, serverName)) configRemoved += 1
+    const connectionRemoved = Boolean(connections.remove(serverName))
     reload(current.workspace)
-    return { file: entry.file }
+    log('删除服务器', serverName, { configRemoved, connectionRemoved })
+    return { configRemoved, connectionRemoved, stillDeclaredByCc: Boolean(cc) }
   }
 
-  function renameServerEntry(from, to) {
+  /** 改名要同时改门禁条目名、定义里的 serverName、以及运行期连接。 */
+  async function renameServerEntry(from, to) {
     if (typeof to !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(to)) {
-      throw new Error(`"${to}" 不是合法的服务器名（字母数字 _ . - ，最长 64）`)
+      throw new Error(`"${to}" 不是合法的名字：只能用字母、数字、下划线、点、短横线，最长 64 位`)
     }
-    const entry = ownEntry(from)
-    if (from !== to && current.servers.has(to)) throw new Error(`"${to}" 已经存在`)
-    if (!renameServer(entry.file, from, to)) {
-      throw new Error(`"${from}" 不在 ${entry.file} 里，可能已被其它地方移除了`)
+    const { entry, owned, cc } = footprintOf(from)
+    if (!entry && !owned) {
+      throw new Error(cc
+        ? `"${from}" 只存在于 Claude Code 的定义里，改名得改 CC 的配置；本插件只能停用它。`
+        : `找不到 "${from}" 的配置，可能已经被删掉了。`)
     }
+    if (from !== to && current.servers.has(to)) throw new Error(`"${to}" 已经存在，换一个名字`)
+    if (entry && !renameServer(entry.file, from, to)) throw new Error(`改名失败：配置里没有 "${from}"`)
+    if (owned) {
+      removeDefinition(owned.file, from)
+      setDefinition(owned.file, to, { ...owned.config, serverName: to })
+    }
+    const connectionMoved = Boolean(connections.remove(from))
     reload(current.workspace)
-    return { file: entry.file, from, to }
+    if (owned) {
+      await connections.upsert({ ...owned.config, serverName: to })
+        .catch((error) => warn(`改名后重连失败: ${error.message}`))
+    }
+    return { from, to, connectionMoved }
   }
 
   /** 真探测一台服务器：运行态 + （能拿到定义时）http / 可执行文件。 */
