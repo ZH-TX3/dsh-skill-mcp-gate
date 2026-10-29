@@ -25,16 +25,51 @@
 
 ## 条目管理与连通性探测
 
-面板里每台服务器右侧有个 `⋯`，展开是三个动作：
+先把「存哪」说清楚，这是最容易误解的地方：
+
+| 东西 | 存在哪 | 谁读 |
+|---|---|---|
+| **门禁状态**（`on` / `deferred` / `off`、逐工具开关） | 本插件配置 `mcp.servers` | 本插件（装配期过滤） |
+| **连接定义**（transport / command / args / env / url / headers） | 本插件配置 `mcp.definitions` | 本插件启动时灌进 loader 的 `mcp-client` 条目 |
+| **CC 的定义** | `~/.claude.json` / `<ws>/.mcp.json` | 只读，用来当编辑器初稿 |
+| **探测结果** | 不存盘、不缓存 | — |
+
+也就是说：**JSON 编辑器保存的是本插件配置里的连接定义**，保存后立刻在运行期创建/更新
+`mcp-client` 条目（真正连上），重启时由插件重新灌入。**不改你的 profile**
+（实测 `loader.write()` 在这个 profile 下是静默失败的，所以不依赖它）。
+
+代价说清楚：这些连接归本插件代管 —— 禁用本插件，它们一起消失。
+
+面板里每台服务器右侧有个 `⋯`，展开是四个动作：
 
 | 动作 | 做什么 | 不做什么 |
 |---|---|---|
 | **重命名** | 把这条记录（状态 + 逐工具配置）搬到新名字 | 不改 DSH profile，不改 CC 的文件 |
 | **删除** | 从它所在的那层配置里删掉这条记录 | 同上；配置文件变空时顺手清掉空的 `mcp` 块 |
+| **编辑 JSON** | 打开一个 textarea，编辑该服务器的 `mcp-client` config；保存即写本插件配置并热加载 | 不改 profile、不改 CC 的文件 |
 | **测试连通** | 真发一次探测，结果显示在按钮旁边 | 不改任何配置、不落缓存 |
 
 **只允许改本插件自己写的条目**。`layer` 是 `cc` 的条目（只存在于 Claude Code 的定义里）两个按钮都是禁用态，
 并说明理由：那是 CC 的文件，本插件不写；要停用它请把状态设为 `off`。
+
+### JSON 编辑器的形状
+
+编辑器里的 JSON 直接就是 DSH `mcp-client` 的 config，两种形态：
+
+```jsonc
+// stdio
+{ "transport": "stdio", "serverName": "context7",
+  "command": "cmd", "args": ["/c", "npx", "-y", "@upstash/context7-mcp"] }
+
+// streamable-http
+{ "transport": "streamable-http", "serverName": "exa",
+  "url": "https://mcp.exa.ai/mcp", "headers": { "Authorization": "Bearer ${EXA_KEY}" } }
+```
+
+校验在写盘之前做：`serverName` 必须匹配 `[A-Za-z0-9_-]{1,32}`（它会变成
+`mcp__<serverName>__<tool>`）、stdio 必须有 `command`、http 必须 http(s) 的 `url`、
+`args` 必须是字符串数组、`env`/`headers` 的值必须是字符串、不认识的键直接丢弃。
+`transport` 接受 `http` / `sse` 别名。
 
 ### 探测的三种结论（如实区分，不包装成"能不能用"）
 

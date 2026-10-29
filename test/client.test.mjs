@@ -224,6 +224,20 @@ console.log('条目操作区')
   check('默认收起', closed.includes('重命名'), false)
 }
 
+console.log('JSON 编辑器')
+{
+  const editorState = { server: 'exa', text: JSON.stringify({ serverName: 'exa' }, null, 2), source: 'claude-code', managed: false, error: null }
+  const out = render(['mcps', S, null, null, { exa: true }, null, '', null, { exa: true }, {}, editorState])
+  check('出现编辑 JSON 按钮', out.includes('编辑 JSON'), true)
+  check('出现保存按钮', out.includes('保存并热加载'), true)
+  check('出现恢复按钮', out.includes('恢复为 CC 定义'), true)
+  check('没有 DSH 配置时禁止删除连接', out.includes('删除 DSH 连接'), true)
+  check('说明保存会接管连接', out.some((t) => t.includes('mcp-client')), true)
+
+  const managed = render(['mcps', S, null, null, { exa: true }, null, '', null, { exa: true }, {}, { ...editorState, source: 'plugin', managed: true }])
+  check('已代管时提示插件代管', managed.some((t) => t.includes('本插件代管的连接')), true)
+}
+
 console.log('工具展开')
 const t4 = render(['mcps', S, null, null, { exa: true }, null, '', null])
 check('展开出现工具名', t4.includes('search'), true)

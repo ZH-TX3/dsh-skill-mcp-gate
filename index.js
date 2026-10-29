@@ -22,6 +22,8 @@ import { assertMcpState, assertMcpToolState, assertSkillState } from './lib/core
 import { agentCwd, toolNames, workspaceList } from './lib/platform/observe.js'
 import { groupToolsByServer } from './lib/core/mcp-policy.js'
 import { runProbe } from './lib/platform/probe.js'
+import { createMcpConnections } from './lib/platform/mcp-connections.js'
+import { normalizeDefinition, probeInfoFromConfig, templateFromCc } from './lib/core/mcp-definition.js'
 import { createSkillProvider } from './lib/platform/provider.js'
 import { createCatalogGate } from './lib/platform/catalog.js'
 import { createMcpFilter } from './lib/platform/mcp-filter.js'
@@ -31,7 +33,7 @@ import { createSnapshotter } from './lib/host/snapshot.js'
 import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
 import {
-  addServerNames, removeServer, renameServer, setServerState, setSkillState, setToolState,
+  addServerNames, removeDefinition, removeServer, renameServer, setDefinition, setServerState, setSkillState, setToolState,
 } from './lib/io.js'
 
 export const name = 'skill-mcp-gate'
@@ -126,11 +128,14 @@ export function apply(ctx, config = {}) {
       log,
     })
 
+  const connections = createMcpConnections({ ctx, log })
+
   const status = () => ({
     catalog: catalogGate.status(),
     mcp: mcpFilter.status(),
     tools: gateTools ? gateTools.status() : { errors: [], disabled: true },
     rules: rulesInjector ? rulesInjector.status() : { disabled: true, injected: 0, last: [], errors: [] },
+    connections: { ...connections.status(), managed: [...(current?.definitions?.keys() ?? [])] },
   })
   const snapshot = createSnapshotter({
     ctx,
@@ -244,12 +249,72 @@ export function apply(ctx, config = {}) {
     const entry = current?.servers.get(serverName)
     const ccInfo = current?.claudeMcp?.servers.find((item) => item.name === serverName)
     const connected = groupToolsByServer(toolNames(ctx, warn)).has(serverName)
+    // DSH 已配置的连接优先：那才是它真正会去连的东西
+    const owned = current?.definitions?.get(serverName)
+    const definition = owned ? probeInfoFromConfig(owned.config) : ccInfo?.definition
     const result = await runProbe({
       connected,
-      ccScope: entry?.ccScope ?? ccInfo?.scope ?? null,
-      definition: ccInfo?.definition,
+      ccScope: owned ? null : (entry?.ccScope ?? ccInfo?.scope ?? null),
+      definition,
     })
     return { name: serverName, connected, ...result }
+  }
+
+  function ccDefinitionOf(serverName) {
+    return current?.claudeMcp?.servers.find((item) => item.name === serverName)?.definition
+  }
+
+  /** 编辑器要显示的 JSON：优先本插件代管的定义，否则用 CC 的定义当模板。 */
+  function getDefinition(serverName) {
+    const owned = current?.definitions?.get(serverName)
+    if (owned) {
+      return { server: serverName, managed: true, config: owned.config, source: 'plugin', file: owned.file }
+    }
+    const template = templateFromCc(serverName, ccDefinitionOf(serverName))
+    return {
+      server: serverName,
+      managed: false,
+      config: template,
+      source: ccDefinitionOf(serverName) ? 'claude-code' : 'blank',
+    }
+  }
+
+  /** 保存 JSON → 校验 → 写本插件配置 → 立刻热加载。 */
+  async function saveDefinition(serverName, json) {
+    let parsed
+    if (typeof json === 'string') {
+      try {
+        parsed = JSON.parse(json)
+      } catch (error) {
+        throw new Error(`JSON 解析失败：${error.message}`)
+      }
+    } else {
+      parsed = json
+    }
+    const config = normalizeDefinition({ ...parsed, serverName: parsed?.serverName ?? serverName })
+    const { ws, file } = writeTarget()
+    // 改名 = 删旧存新，避免留下两条指向同一台服务器的连接
+    if (config.serverName !== serverName) removeDefinition(file, serverName)
+    setDefinition(file, config.serverName, config)
+    reload(ws)
+    const result = await connections.upsert(config)
+    return { ...result, config, file, workspace: ws }
+  }
+
+  async function deleteDefinition(serverName) {
+    const owned = current?.definitions?.get(serverName)
+    if (!owned) throw new Error(`本插件里没有 "${serverName}" 的连接定义`)
+    if (!removeDefinition(owned.file, serverName)) throw new Error(`删除失败：${owned.file} 里没有这条定义`)
+    reload(current.workspace)
+    const removedId = connections.remove(serverName)
+    return { id: removedId ?? null, file: owned.file }
+  }
+
+  /** 启动 / 保存后：把配置里的定义灌进 loader。 */
+  async function syncConnections() {
+    const result = await connections.sync(current?.definitions)
+    for (const failure of result.failed) warn(`MCP 连接失败: ${failure.name} — ${failure.reason}`)
+    return result
   }
 
   // ── 接线 ──────────────────────────────────────────────
@@ -286,8 +351,13 @@ export function apply(ctx, config = {}) {
     removeServer: removeServerEntry,
     renameServer: renameServerEntry,
     probeServer,
+    getDefinition,
+    saveDefinition,
+    deleteDefinition,
   })
   const routeDisposers = routes.map((route) => ctx.webServer.register(route))
+
+  syncConnections().catch((error) => warn(`灌入 MCP 连接失败: ${error.message}`))
 
   rulesInjector?.install()
   gateTools?.install()

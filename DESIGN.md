@@ -1091,3 +1091,72 @@ CC 的 `.claude/rules/` 不是一个目录，是一套**条件加载**协议：
 - `test/store.test.mjs`：改名搬状态、目标重名报错且不写坏文件、删除返回布尔、删空后清掉空块、无关键不受影响
 - `test/middle-layer.test.mjs`：三条路由真跑（改名后回落全局层、删不存在的条目 400、CC-only 条目拒绝删除）
 - 真实实例（3099）实测：`exa` → `HTTP 405 · 689ms` 可达；`context7`（command=cmd）→ 找到 `cmd.exe`；只登记名字的 `demo-server` → unknown 并说明原因
+
+## 23. v0.12.0 — MCP 连接定义：JSON 编辑 + 运行期接管
+
+### 23.1 为什么不是「写 profile」
+
+第一版实现是 `loader.create()` 之后 `loader.write()`，以为能落盘。实测：
+
+```
+create 成功 → loader 里出现 mcp-client 条目 → 同进程内真的去连了
+write() 被调用 → ~/.dsh/profiles/web/cordis.patch.yml 一个字节没变
+```
+
+原因：这个 profile 的根装配文件（`cordis.yml`）内容是 `[]` 且注释写明「Edit cordis.patch.yml,
+not this file」——`EntryTree.write()` 把整棵树 dump 回根文件，失败时只写一条 logger warning
+（`_writeFile` 的 `readonly` / 装配来源不匹配），**不会抛给调用方**。属于典型的静默失败。
+
+结论：**不能靠 loader 持久化**，也不值得为此手写 YAML 去改用户的 profile。
+
+### 23.2 真源：本插件配置里的 `mcp.definitions`
+
+```
+~/.dsh/skill-mcp-gate/settings.json      # 全局
+<工作区>/.dsh/skill-mcp-gate.json         # 项目（优先）
+{
+  "mcp": {
+    "servers": { "exa": "deferred" },
+    "definitions": {
+      "exa": { "transport": "streamable-http", "serverName": "exa", "url": "https://...", "headers": {} }
+    }
+  }
+}
+```
+
+- **保存**：校验 → 写配置文件（原子写）→ `loader.upsert()` 立刻接管 → 面板刷新
+- **启动**：`apply()` 末尾 `syncConnections()` 把每份定义 ensure 成运行期条目
+- **删除**：从配置里删 → `loader.remove()` → 断开
+- **改 serverName**：删旧存新，避免两条连接抢同一个工具前缀
+
+边界也写清了：连接归本插件代管，插件被禁用/卸载，这些连接一起消失。语义正确，且
+用户 profile 保持原样。
+
+### 23.3 分层
+
+| 层 | 文件 | 内容 |
+|---|---|---|
+| 纯逻辑 | `lib/core/mcp-definition.js` | `normalizeDefinition()`（DSH config 形状校验）、`templateFromCc()`、`probeInfoFromConfig()` |
+| 运行期 | `lib/platform/mcp-connections.js` | `list/find/upsert/remove/sync`，只碰 `name === 'mcp-client'` 的条目 |
+| I/O | `lib/io.js` | `setDefinition()` / `removeDefinition()` |
+| 装载 | `lib/load.js` | 读 `mcp.definitions`，逐条过校验，坏定义进 warnings |
+| 表面 | `lib/host/routes.js` | `POST /mcp/definition` `/mcp/define` `/mcp/undefine` |
+
+### 23.4 校验规则（写盘之前）
+
+- `transport`：`stdio` | `streamable-http`（接受 `http` / `sse` 别名；有 `url` 且未写 transport 时默认 http）
+- `serverName`：`[A-Za-z0-9_-]{1,32}` —— 它决定工具名 `mcp__<serverName>__<tool>`，DSH 自己也这么校验
+- stdio 必填 `command`；`args` 必须是字符串数组；`env` 值必须是字符串
+- http 必填 `http(s)` 的 `url`；`headers` 值必须是字符串
+- 不认识的键一律丢弃，不往 config 里塞垃圾
+- `${VAR}` 不在写盘时展开（保留原样），只在探测时按环境变量展开
+
+### 23.5 验证
+
+- `test/mcp-definition.test.mjs`：13 条校验失败路径、别名归一、键白名单、CC 初稿、探测映射
+- `test/middle-layer.test.mjs`：路由全链路（初稿来源 → 保存 → 定义落盘 → 快照 `managed` →
+  探测优先用本插件定义 → 坏 JSON 400 → 非法名 400 → 删除清理 → 重复删除 400）
+- **真实实例实测**：
+  - 保存 → `created=true`、`active=["gateSelfTest"]`、profile 的 `cordis.patch.yml` md5 未变
+  - 杀掉进程重启 → `active=["gateSelfTest"]`（说明 `sync()` 重建成功）
+  - 删除 → `active=[]`、配置文件里 `definitions` 一并清空

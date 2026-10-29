@@ -50,7 +50,28 @@ const dispatches = []
 const routes = []
 const commands = []
 
+// 假的 loader：记录 create/update/remove 与 write 次数，用来验证「写 profile + 热加载」
+const loaderEntries = new Map()
+let loaderWrites = 0
+let loaderSeq = 0
+const fakeLoader = {
+  entries() { return [...loaderEntries.values()][Symbol.iterator]() },
+  async create(options) {
+    const id = `entry-${++loaderSeq}`
+    loaderEntries.set(id, { id, options: { ...options, id }, disabled: false })
+    return id
+  },
+  async update(id, options) {
+    const entry = loaderEntries.get(id)
+    if (!entry) throw new Error(`没有条目 ${id}`)
+    entry.options = { ...entry.options, ...options }
+  },
+  remove(id) { loaderEntries.delete(id) },
+  write() { loaderWrites += 1 },
+}
+
 const ctx = {
+  get: (name) => (name === 'loader' ? fakeLoader : undefined),
   skills: { list: async () => [], registerProvider: () => () => {} },
   commands: { register: (def) => { commands.push(def); return () => {} } },
   tools: {
@@ -233,6 +254,64 @@ console.log('' + '\n条目管理：改名 / 删除 / 探测')
   const ccOnly = await callJson('/mcp/remove', { server: 'ccOnly' })
   check('CC-only 的条目拒绝删除', ccOnly.status, 400)
   check('并说明理由', String(ccOnly.body.error).includes('Claude Code'), true)
+}
+
+console.log('' + '\n连接定义：编辑 JSON + 热加载')
+{
+  const tokenRoute = routes.find((r) => r.path.endsWith('/token'))
+  let token = null
+  tokenRoute.handler({}, { statusCode: 200, setHeader() {}, end(body) { token = JSON.parse(body).token } })
+  const callJson = (suffix, payload) => new Promise((resolve, reject) => {
+    const route = routes.find((r) => r.path.endsWith(suffix))
+    if (!route) return reject(new Error(`没有路由 ${suffix}`))
+    const timer = setTimeout(() => reject(new Error(`${suffix} 没写响应`)), 5000)
+    const handlers = {}
+    const req = { method: 'POST', headers: { 'x-gate-token': token }, url: '/', on(event, fn) { handlers[event] = fn } }
+    const res = { statusCode: 200, setHeader() {}, end(chunk) { clearTimeout(timer); resolve({ status: this.statusCode, body: JSON.parse(chunk) }) } }
+    route.handler(req, res)
+    handlers.data?.(JSON.stringify(payload ?? {}))
+    handlers.end?.()
+  })
+
+  const initial = await callJson('/mcp/definition', { server: 'ccOnly' })
+  check('没有 DSH 配置时用 CC 定义当模板', initial.body.definition.source, 'claude-code')
+  check('模板是 streamable-http', initial.body.definition.config.transport, 'streamable-http')
+  check('初始 managed=false', initial.body.definition.managed, false)
+
+  const saved = await callJson('/mcp/define', {
+    server: 'ccOnly',
+    json: JSON.stringify({ serverName: 'ccOnly', transport: 'streamable-http', url: 'http://127.0.0.1:1/mcp' }),
+  })
+  check('保存成功', saved.body.ok, true)
+  check('真的创建了 loader 条目', loaderEntries.size, 1)
+  check('不依赖 loader.write（实测会静默失败）', loaderWrites, 0)
+  check('条目用的是 mcp-client', [...loaderEntries.values()][0].options.name, 'mcp-client')
+  check('快照标出插件代管', saved.body.state.mcp.connections.managed, ['ccOnly'])
+  const ownConfig = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
+  check('定义真的落到本插件配置里', ownConfig.mcp.definitions.ccOnly.url, 'http://127.0.0.1:1/mcp')
+
+  const probeManaged = await callJson('/mcp/probe', { server: 'ccOnly' })
+  check('探测优先用 DSH 配置（仍是 http）', probeManaged.body.probe.mode, 'http')
+  check('探测如实报不可达', probeManaged.body.probe.ok, false)
+
+  const badJson = await callJson('/mcp/define', { server: 'ccOnly', json: '{ nope' })
+  check('坏 JSON 返回 400', badJson.status, 400)
+  check('并说明是 JSON 解析失败', String(badJson.body.error).includes('JSON 解析失败'), true)
+
+  const badName = await callJson('/mcp/define', { server: 'ccOnly', json: JSON.stringify({ serverName: 'a b', command: 'x' }) })
+  check('非法 serverName 被拒', badName.status, 400)
+  check('条目没被改坏', loaderEntries.size, 1)
+
+  const removedDef = await callJson('/mcp/undefine', { server: 'ccOnly' })
+  check('删除连接成功', removedDef.body.ok, true)
+  check('loader 条目清空', loaderEntries.size, 0)
+  check('快照里不再代管', removedDef.body.state.mcp.connections.managed, [])
+  const afterDelete = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
+  check('配置里的定义也删掉了', afterDelete.mcp?.definitions?.ccOnly, undefined)
+
+  const againDef = await callJson('/mcp/undefine', { server: 'ccOnly' })
+  check('重复删除报错', againDef.status, 400)
+  check('并说明没有这条定义', String(againDef.body.error).includes('本插件里没有'), true)
 }
 
 rmSync(home, { recursive: true, force: true })
