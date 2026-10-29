@@ -204,14 +204,36 @@ const t2 = render(['skills', offSnap, null, null, {}, null, '', null])
 check('关闭后不显示三态分段', t2.includes('仅名称'), false)
 check('关闭后开关标签为启用', t2.some((t) => t.startsWith('启用 ')), true)
 
+// MCP 渲染的 hook 数组：默认把三个非项目组都展开，另有断言专门验折叠
+const EXPAND_MCP = { global: false, cc: false, runtime: false }
+const mcpHooks = (over = {}) => ([
+  'mcps', S, null, null,
+  over.expanded ?? {}, null, '', null,
+  over.actionsOpen ?? {}, over.probeResults ?? {},
+  over.editor ?? null, over.notices ?? {},
+  over.collapsedGroups ?? {}, over.collapsedMcp ?? EXPAND_MCP,
+])
+
+console.log('MCPs tab（默认：只展开本项目组）')
+{
+  const folded = render(mcpHooks({ collapsedMcp: {} }))
+  check('本项目组标题', folded.includes('本项目 MCP'), true)
+  check('本项目行可见', folded.includes('proj-mcp2'), true)
+  check('全局组标题在', folded.includes('全局 MCP'), true)
+  check('全组默认折叠（行不可见）', folded.includes('exa'), false)
+  check('CC 组标题在', folded.includes('仅 Claude Code 声明'), true)
+  check('CC 组默认折叠', folded.includes('cc-only'), false)
+  check('折叠时给出来源路径', folded.some((t) => t.includes('skill-mcp-gate')), true)
+}
+
 console.log('MCPs tab')
-const t3 = render(['mcps', S, null, null, {}, null, '', null])
+const t3 = render(mcpHooks())
 check('MCPs tab 标题', t3.some((t) => t.startsWith('MCPs ')), true)
 check('自定义填入标题', t3.includes('自定义填入'), true)
 check('自定义填入按钮', t3.includes('解析并添加'), true)
 check('服务器行', t3.includes('exa'), true)
 check('工具展开按钮', t3.some((t) => t.startsWith('工具 ')), true)
-const mcpTreeSwitches = collectNodesByProp(tree(['mcps', S, null, null, {}, null, '', null]), 'role')
+const mcpTreeSwitches = collectNodesByProp(tree(mcpHooks()), 'role')
   .filter((n) => n.props.role === 'switch').length
 check('CC 作用域 pill', t3.includes('CC 用户'), true)
 check('延迟服务器 pill', t3.includes('延迟'), true)
@@ -228,30 +250,30 @@ check('CC 已拒绝 pill', t3.includes('CC 已拒绝'), true)
 
 console.log('条目操作区')
 {
-  const opened = render(['mcps', S, null, null, { exa: true }, null, '', null, { exa: true }])
+  const opened = render(mcpHooks({ expanded: { exa: true }, actionsOpen: { exa: true } }))
   check('展开后出现重命名', opened.includes('重命名'), true)
   check('展开后出现删除', opened.includes('删除'), true)
   check('展开后出现测试连通', opened.includes('测试连通'), true)
-  const closed = render(['mcps', S, null, null, {}, null, '', null])
+  const closed = render(mcpHooks())
   check('默认收起', closed.includes('重命名'), false)
 }
 
 console.log('JSON 编辑器')
 {
   const editorState = { server: 'exa', text: JSON.stringify({ serverName: 'exa' }, null, 2), source: 'claude-code', managed: false, error: null }
-  const out = render(['mcps', S, null, null, { exa: true }, null, '', null, { exa: true }, {}, editorState])
+  const out = render(mcpHooks({ expanded: { exa: true }, actionsOpen: { exa: true }, editor: editorState }))
   check('出现编辑 JSON 按钮', out.includes('编辑 JSON'), true)
   check('出现保存按钮', out.includes('保存并热加载'), true)
   check('出现恢复按钮', out.includes('恢复为 CC 定义'), true)
   check('删除按钮统一在动作行里（编辑器里不再重复一个）', out.includes('删除 DSH 连接'), false)
   check('说明保存会接管连接', out.some((t) => t.includes('mcp-client')), true)
 
-  const managed = render(['mcps', S, null, null, { exa: true }, null, '', null, { exa: true }, {}, { ...editorState, source: 'plugin', managed: true }])
+  const managed = render(mcpHooks({ expanded: { exa: true }, actionsOpen: { exa: true }, editor: { ...editorState, source: 'plugin', managed: true } }))
   check('已代管时提示插件代管', managed.some((t) => t.includes('本插件代管的连接')), true)
 }
 
 console.log('工具展开')
-const t4 = render(['mcps', S, null, null, { exa: true }, null, '', null])
+const t4 = render(mcpHooks({ expanded: { exa: true } }))
 check('展开出现工具名', t4.includes('search'), true)
 check('已关闭说明', t4.some((t) => t.includes('已从模型工具列表移除')), true)
 

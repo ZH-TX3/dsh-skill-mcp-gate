@@ -1308,3 +1308,30 @@ names = Object.keys(block)   // ← 这里
   CC 字段 pill 都在
 
 `npm test` 16 套件 553 项全绿。
+
+## 28. v0.12.5 — MCP 列表同样分组折叠
+
+Skills 分组折叠之后，MCP 也照做，避免两边交互不一致。
+
+### 28.1 分组维度：声明来源
+
+| 组 | 判定 | 默认 |
+|---|---|---|
+| 本项目 MCP | `layer === 'project'`（`<工作区>/.dsh/skill-mcp-gate.json`） | **展开** |
+| 全局 MCP | `layer === 'global'`（`~/.dsh/skill-mcp-gate/settings.json`） | 折叠 |
+| 仅 Claude Code 声明 | `layer === 'cc'`（只存在于 CC 文件里） | 折叠 |
+| 仅运行期发现 | 没有配置条目，但工具出现在装配产物里（`layer === null`） | 折叠 |
+
+「插件代管」不单独成组：一条定义落在哪个文件，就按那个文件的分组显示，语义更直观。
+
+### 28.2 复用
+
+组头抽成 `sectionHeader({ id, label, hint, count, collapsed, onToggle })`，Skills 与 MCP 共用；
+两个 tab 各有独立的折叠 state（`collapsedGroups` / `collapsedMcp`），互不影响。
+默认值同样写在渲染里：只有用户点过的组才记住显式选择。
+
+### 28.3 验证
+
+`test/client.test.mjs`：新增「MCPs tab（默认：只展开本项目组）」——组标题在、项目行可见、
+全局与 CC 组只有标题；其余 MCP 用例统一走 `mcpHooks()` 把三个非项目组展开。
+`npm test` 16 套件 560 项全绿。
