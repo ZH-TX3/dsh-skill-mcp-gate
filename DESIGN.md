@@ -1276,3 +1276,35 @@ names = Object.keys(block)   // ← 这里
   - `/mcp/add` 粘一份 config → `names=["wipeMe"]`、`definitions=["wipeMe"]`、`connected=["wipeMe"]`、`layer=project`
   - `/mcp/remove` → `configRemoved=2`、`connectionRemoved=true`、`stillDeclaredByCc=false`，列表与配置文件都清干净
 - `npm test` 16 套件 544 项全绿
+
+## 27. v0.12.4 — Skills 列表按来源分组，非项目组默认折叠
+
+### 27.1 诉求
+
+技能一多，面板就是一条长列表：用户级（`~/.claude/skills` 等）常常十几个，把当前项目自己的技能挤下去。
+要求：**不是本项目 skills 目录的，默认折叠，点了才展开**。
+
+### 27.2 做法
+
+`lib/client.js` 的 Skills 视图从「一条平铺列表」改成三段卡片：
+
+| 组 | 来源 | 默认 |
+|---|---|---|
+| 本项目技能 | `<工作区>/.dsh/skills`、`.claude/skills`、`.agents/skills` | **展开** |
+| 用户级技能 | `~/.claude/skills`、`~/.dsh/skills`、`~/.agents/skills` | 折叠 |
+| 内置技能 | 随 DSH 打包 | 折叠 |
+
+- 分组键来自 `skill.scope`（`project` / `user` / `builtin`），未知 scope 归到「用户」
+- 组头是按钮：`▸/▾ + 组名 + 数量 + 来源路径`，点了切换；空组不渲染
+- 折叠状态只存「用户改过的」：`collapsedGroups[key] === undefined` 时按默认策略算，
+  所以默认值写在渲染里而不是 state 初始化里 —— 不会因为一次点开把默认行为永久改掉
+- 折叠时行完全不渲染（不是 CSS 隐藏），长列表的渲染成本也一起省了
+
+### 27.3 验证
+
+`test/client.test.mjs` 两段：
+- 默认渲染：项目组标题与行可见；用户组、内置组**只有标题**，行不可见；折叠时给出来源说明
+- 传入 `collapsedGroups = { user: false, builtin: false }`：三组全展开，行、开关、三态分段、
+  CC 字段 pill 都在
+
+`npm test` 16 套件 553 项全绿。

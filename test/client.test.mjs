@@ -173,18 +173,30 @@ const S = { ...snapshot, workspaces: [
   { key: 'D:/Work/demo', label: 'D:/Work/demo', cwd: 'D:/Work/demo', sessions: 2 },
 ], active: 'global' }
 
-console.log('Skills tab（默认）')
+console.log('Skills tab（默认：只展开项目组）')
 const t1 = render(['skills', S, null, null, {}, null, '', null])
 check('标题', t1.includes('Skills / MCPs 管理'), true)
 check('tab 顺序：Skills 在前', t1.findIndex((t) => t.startsWith('Skills ')) < t1.findIndex((t) => t.startsWith('MCPs ')), true)
 check('左侧作用域列表有全局', t1.includes('全局'), true)
 check('左侧作用域列表有工作区', t1.some((t) => t.includes('demo')), true)
 check('作用域说明', t1.some((t) => t.includes('写入')), true)
-check('技能行', t1.includes('dataviz'), true)
-check('IOS 开关存在', t1.includes('关闭 dataviz') || t1.includes('启用 dataviz'), true)
-check('打开态显示三态分段', ['正常', '仅名称', '仅手动'].every((x) => t1.includes(x)), true)
-check('CC 字段未适配 pill', t1.some((t) => t.includes('CC 字段 paths 未适配')), true)
+check('项目组标题', t1.includes('本项目技能'), true)
+check('项目组默认展开（技能行可见）', t1.includes('proj-skill'), true)
+check('项目组的开关可见', t1.includes('关闭 proj-skill') || t1.includes('启用 proj-skill'), true)
+check('用户组标题在', t1.includes('用户级技能'), true)
+check('用户组默认折叠（行不可见）', t1.includes('karpathy-guidelines'), false)
+check('内置组标题在', t1.includes('内置技能'), true)
+check('内置组默认折叠（行不可见）', t1.includes('dataviz'), false)
+check('折叠时给出分组说明', t1.some((t) => t.includes('~/.claude/skills')), true)
 check('页脚统计', t1.some((t) => t.includes('个关闭')), true)
+
+console.log('Skills tab（全部展开）')
+const t1b = render(['skills', S, null, null, {}, null, '', null, {}, {}, null, {}, { user: false, builtin: false }])
+check('展开后用户技能可见', t1b.includes('karpathy-guidelines'), true)
+check('展开后内置技能可见', t1b.includes('dataviz'), true)
+check('IOS 开关存在', t1b.includes('关闭 dataviz') || t1b.includes('启用 dataviz'), true)
+check('打开态显示三态分段', ['正常', '仅名称', '仅手动'].every((x) => t1b.includes(x)), true)
+check('CC 字段未适配 pill', t1b.some((t) => t.includes('CC 字段 paths 未适配')), true)
 
 console.log('关闭态技能不显示三态')
 const offSnap = { ...S, skills: S.skills.map((s) => ({ ...s, state: 'off' })) }
