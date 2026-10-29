@@ -307,6 +307,16 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('定义落在 skill-mcp-gate.json', ownConfig.mcp.definitions.ccOnly.url, 'http://127.0.0.1:1/mcp')
   check('没有擅自创建 .mcp.json', existsSync(join(ws, '.mcp.json')), false)
 
+  // off = 真的断开，不只是隐藏工具
+  const offState = await callJson('/mcp', { server: 'ccOnly', state: 'off' })
+  check('off 后运行期条目被移除', loaderEntries.size, 0)
+  check('off 后 active 为空', offState.body.state.mcp.connections.active, [])
+  check('off 后仍保留定义（可随时再打开）', offState.body.state.mcp.connections.managed.includes('ccOnly'), true)
+
+  const backOn = await callJson('/mcp', { server: 'ccOnly', state: 'on' })
+  check('on 后重新建连接', loaderEntries.size, 1)
+  check('on 后 active 恢复', backOn.body.state.mcp.connections.active.includes('ccOnly'), true)
+
   const probeManaged = await callJson('/mcp/probe', { server: 'ccOnly' })
   check('探测优先用 DSH 配置（仍是 http）', probeManaged.body.probe.mode, 'http')
   check('探测如实报不可达', probeManaged.body.probe.ok, false)

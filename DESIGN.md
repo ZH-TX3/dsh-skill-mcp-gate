@@ -1574,3 +1574,40 @@ iphone 工作区（定义在本插件配置里）
 
 - 实测启动时序（干净实例）：`t+1s` 0 工具 → `t+4s` 0 工具 → **`t+7s` 2 个工具、connected=true**
 - `npm test` 19 套件 603 项全绿
+
+## 35. v0.15.2 — 「关闭不生效」：语义搞错了
+
+### 35.1 现象
+
+服务器连上（绿灯），点关闭后行仍然显示绿的，模型那边也照旧能调 —— 看起来「关不掉」。
+
+### 35.2 根因
+
+`off` 从 v0.9 起只做了一件事：**把工具从装配产物里过滤掉**（省 token），连接一直保持。
+理由是「不断连、下个 turn 即恢复」。但界面上没有任何地方说明这一点，用户看到绿点还在、
+工具还在，自然判断为「没生效」。而且和 Claude Code 的心智模型相反：CC 里关掉一个 MCP 就是断开。
+
+### 35.3 现在的三档（语义明确）
+
+| 档 | 运行期连接 | 模型可见 | 可搜/可调 |
+|---|---|---|---|
+| `on` | 连 | 是 | 直接调 |
+| `deferred` | 连 | 否 | 可搜 + 经中间层调 |
+| `off` | **断开** | 否 | 拒绝 |
+
+实现：`syncConnections()` 只把「状态不是 off」的定义交给 `connections.sync()`；
+`off` 的定义会被 reconcile 回收（`connections.remove`），进程随之结束。
+`setServer` 变成 async，写完配置立刻重算连接，所以开关是**即时生效**的。
+
+想「保留连接、只是别占提示词」的场景交给 `deferred` —— 两个档各司其职，不再用 `off` 兼职。
+
+### 35.4 验证（真实实例）
+
+```
+初始(off)       state=off  connected=false  active=[]
+点关闭          state=off  connected=false  active=[]      managed=["iostest"]（定义还在）
+点打开          state=on   active=["iostest"]             ← 立刻重建
+等 18s          state=on   connected=true  tools=resolve-library-id,query-docs
+```
+
+`npm test` 19 套件 603 项全绿（middle-layer 新增：off 移除运行期条目、on 重建）。

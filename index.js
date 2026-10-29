@@ -170,12 +170,14 @@ export function apply(ctx, config = {}) {
     return { file, workspace: ws }
   }
 
-  function setServer(server, nextState, workspaceKey) {
+  async function setServer(server, nextState, workspaceKey) {
     if (typeof server !== 'string' || server.length === 0) throw new Error('缺少服务器名')
     assertMcpState(nextState, `mcp.${server}`)
     const { ws, file } = writeTarget(workspaceKey)
     setServerState(file, server, nextState)
     reload(ws)
+    // off → 断开；on/deferred → 重新接上
+    await syncConnections()
   }
 
   function setTool(server, tool, nextState, workspaceKey) {
@@ -399,9 +401,18 @@ export function apply(ctx, config = {}) {
     return { id: removedId ?? null, files: filesRemovedFrom }
   }
 
-  /** 启动 / 保存后：把配置里的定义灌进 loader。 */
+  /**
+   * 把配置里的定义灌进 loader。
+   * 只灌「没被关闭」的：`off` 的语义是**断开**，不只是隐藏工具。
+   * 这样关掉某台服务器会真的结束它的进程；想保留连接又不想占提示词，用 `deferred`。
+   */
   async function syncConnections() {
-    const result = await connections.sync(current?.definitions)
+    const desired = new Map()
+    for (const [name, entry] of current?.definitions ?? new Map()) {
+      if (current?.servers.get(name)?.state === 'off') continue
+      desired.set(name, entry)
+    }
+    const result = await connections.sync(desired)
     for (const failure of result.failed) warn(`MCP 连接失败: ${failure.name} — ${failure.reason}`)
     return result
   }
