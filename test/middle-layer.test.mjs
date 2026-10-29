@@ -287,6 +287,8 @@ console.log('' + '\n连接定义：编辑 JSON + 热加载')
   check('不依赖 loader.write（实测会静默失败）', loaderWrites, 0)
   check('条目用的是 mcp-client', [...loaderEntries.values()][0].options.name, 'mcp-client')
   check('快照标出插件代管', saved.body.state.mcp.connections.managed, ['ccOnly'])
+  const ccOnlyRow = saved.body.state.mcp.servers.find((srv) => srv.name === 'ccOnly')
+  check('只有定义也能在面板上看到（补门禁状态）', ccOnlyRow?.state, 'on')
   const ownConfig = JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8'))
   check('定义真的落到本插件配置里', ownConfig.mcp.definitions.ccOnly.url, 'http://127.0.0.1:1/mcp')
 

@@ -1210,3 +1210,15 @@ names = Object.keys(block)   // ← 这里
   字符串数组、每行一个、去重、非法名过滤、坏 JSON、空内容、形状识别
 - `test/middle-layer.test.mjs`：真跑 `/mcp/add` 粘贴一份 config → 只加一台、定义落盘、顺手建了运行期连接；
   并显式断言名字里**没有** `transport`/`serverName`/`command`/`args`
+
+## 25. v0.12.2 — 有定义却看不见的服务器
+
+用户用旧解析粘进一份 config 后，配置里只剩 `mcp.definitions.test`，没有 `mcp.servers.test`。
+面板的服务器列表来自 `mcp.servers`（门禁状态）+ 运行期工具，于是**这条定义完全不可见**：
+既看不到、也改不了、也删不掉。
+
+修法：`load.js` 在建完 servers 之后补一遍——凡是 `definitions` 里有、`servers` 里没有的，
+补一条 `state: 'on'`（层按定义所在文件判定）。语义上「有连接定义」本身就意味着「这台服务器存在」，
+门禁状态只是它的一个维度，缺省就是 `on`。
+
+顺带把用户配置里残留的四条假记录（`transport` / `serverName` / `command` / `args`）删干净。

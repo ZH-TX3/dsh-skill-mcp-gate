@@ -30,7 +30,7 @@
 | 东西 | 存在哪 | 谁读 |
 |---|---|---|
 | **门禁状态**（`on` / `deferred` / `off`、逐工具开关） | 本插件配置 `mcp.servers` | 本插件（装配期过滤） |
-| **连接定义**（transport / command / args / env / url / headers） | 本插件配置 `mcp.definitions` | 本插件启动时灌进 loader 的 `mcp-client` 条目 |
+| **连接定义**（transport / command / args / env / url / headers） | 本插件配置 `mcp.definitions` | 本插件启动时灌进 loader 的 `mcp-client` 条目；**有定义就一定会在面板里出现**（缺门禁状态时自动补一条 `on`） |
 | **CC 的定义** | `~/.claude.json` / `<ws>/.mcp.json` | 只读，用来当编辑器初稿 |
 | **探测结果** | 不存盘、不缓存 | — |
 
