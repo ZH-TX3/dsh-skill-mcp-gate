@@ -177,7 +177,8 @@ console.log('\nCC 出处与状态的分工')
   check('本插件配置决定状态', exa.state, 'deferred')
   check('保留 CC 作用域 tag', exa.ccScope, 'user')
   check('保留 CC 的拒绝标记', exa.ccRejected, true)
-  check('层标为本插件项目层', exa.layer, 'project')
+  check('归属层仍是 CC（声明在 CC 里）', exa.layer, 'cc')
+  check('门禁记录在我们的配置文件里', typeof exa.stateFile, 'string')
 }
 
 console.log('\n没有延迟服务器时中间层不占位')
@@ -243,7 +244,7 @@ console.log('' + '\n条目管理：改名 / 删除 / 探测')
   check('改名后快照里有新名字', renamed.body.state.mcp.servers.some((srv) => srv.name === 'exa2'), true)
   // 只搬「赢的那一层」：项目层改了名，全局层还有同名条目，所以 exa 仍在列表里
   const exaNow = renamed.body.state.mcp.servers.find((srv) => srv.name === 'exa')
-  check('旧名字回落到下一层（全局）而不是消失', exaNow?.layer, 'global')
+  check('旧名字仍在（CC 声明）', exaNow?.layer, 'cc')
   check('改名写在项目层文件里',
     JSON.parse(readFileSync(join(ws, '.dsh', 'skill-mcp-gate.json'), 'utf8')).mcp.servers.exa2 !== undefined, true)
 

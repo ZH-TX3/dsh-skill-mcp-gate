@@ -224,7 +224,8 @@ export function apply(ctx, config = {}) {
     const owned = current?.definitions?.get(serverName)
     const ccInfo = current?.claudeMcp?.servers.find((item) => item.name === serverName)
     return {
-      entry: entry && entry.layer !== 'cc' ? entry : null,
+      // 有我们自己的门禁记录（stateFile）就算「可操作」，哪怕它归属 CC 组
+      entry: entry && (entry.layer !== 'cc' || entry.stateFile) ? entry : null,
       owned: owned ?? null,
       cc: ccInfo ?? null,
     }
@@ -242,7 +243,8 @@ export function apply(ctx, config = {}) {
         : `找不到 "${serverName}" 的配置，可能已经被删掉了。刷新面板看看。`)
     }
     let configRemoved = 0
-    if (entry && removeServer(entry.file, serverName)) configRemoved += 1
+    // 门禁记录只可能在 stateFile 里；CC 的声明本身不能删
+    if (entry?.stateFile && removeServer(entry.stateFile, serverName)) configRemoved += 1
     let readOnlySource = null
     if (owned && owned.source === 'mcp.json') {
       // 定义来自项目的 .mcp.json —— 那是 Claude Code 的文件，我们只读不改。
@@ -277,7 +279,7 @@ export function apply(ctx, config = {}) {
         : `找不到 "${from}" 的配置，可能已经被删掉了。`)
     }
     if (from !== to && current.servers.has(to)) throw new Error(`"${to}" 已经存在，换一个名字`)
-    if (entry && !renameServer(entry.file, from, to)) throw new Error(`改名失败：配置里没有 "${from}"`)
+    if (entry?.stateFile && !renameServer(entry.stateFile, from, to)) throw new Error(`改名失败：配置里没有 "${from}"`)
     if (owned) {
       removeDefinition(owned.file, from)
       setDefinition(owned.file, to, { ...owned.config, serverName: to })

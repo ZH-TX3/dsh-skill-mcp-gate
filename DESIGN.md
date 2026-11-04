@@ -1611,3 +1611,40 @@ iphone 工作区（定义在本插件配置里）
 ```
 
 `npm test` 19 套件 603 项全绿（middle-layer 新增：off 移除运行期条目、on 重建）。
+
+## 36. v0.15.3 — 点一下关闭，「仅 CC 声明」的服务器就跑到本项目组
+
+### 36.1 为什么会跳组
+
+面板的左侧分组按 `layer` 分。旧实现里 `readServers()` 在合并本插件配置时无条件把
+`layer` 写成 `global` / `project` —— 于是给一台「只在 CC 里声明」的服务器点一下开关，
+它的归属层就从 `cc` 变成 `project`，**整行换组**，看起来像「被搬走了」。
+
+### 36.2 归属层 = 谁声明了连接
+
+`layer` 现在的含义固定为「连接定义是谁声明的」：
+
+| 情况 | layer | 说明 |
+|---|---|---|
+| 只有 CC 声明（我们最多记个开关） | `cc` | 点开关**不会**换组 |
+| 我们自己的配置里只有开关、没有连接定义 | `global` / `project` | 只是名字占位 |
+| 本插件接管了连接定义 | `global` / `project` | 真正会去连 |
+
+配套新增两个字段：`stateFile`（我们的门禁记录在哪，CC-only 时为 null）与
+`hasDefinition`（有没有连接定义）。`removeServerEntry` / `renameServerEntry` 改用它俩判断可操作性 ——
+以前用 `layer === 'cc'` 一刀切，导致「CC 声明 + 我们写了开关」的条目既不能删也不能改名。
+
+### 36.3 顺手做的两件小事
+
+- 分组标题从「仅 Claude Code 声明」改成「Claude Code 声明」（点了开关之后它就不再是「仅」）
+- 「延迟」按钮在没有连接定义时禁用（没东西可连，延迟加载没意义），并给出原因
+
+### 36.4 验证（真实实例）
+
+```
+初始：            exa  layer=cc  state=on   stateFile=无
+点关闭：          exa  layer=cc  state=off  stateFile=有     ← 仍在 CC 组
+再打开：          配置文件回到 servers:{}，definitions 未受影响
+```
+
+`npm test` 19 套件 609 项全绿。

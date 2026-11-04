@@ -232,7 +232,7 @@ console.log('MCPs tab（默认：只展开本项目组）')
   check('本项目行可见', folded.includes('proj-mcp2'), true)
   check('全局组标题在', folded.includes('全局 MCP'), true)
   check('全组默认折叠（行不可见）', folded.includes('exa'), false)
-  check('CC 组标题在', folded.includes('仅 Claude Code 声明'), true)
+  check('CC 组标题在', folded.includes('Claude Code 声明'), true)
   check('CC 组默认折叠', folded.includes('cc-only'), false)
   check('折叠时给出来源路径', folded.some((t) => t.includes('skill-mcp-gate')), true)
 }
