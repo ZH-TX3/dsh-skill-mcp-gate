@@ -106,6 +106,18 @@ function collectNodesByProp(node, key, out = []) {
   return out
 }
 
+function collectTypes(node, out = []) {
+  if (node == null || typeof node === 'boolean') return out
+  if (Array.isArray(node)) { for (const child of node) collectTypes(child, out); return out }
+  if (typeof node !== 'object') return out
+  if (typeof node.type === 'function') {
+    try { return collectTypes(node.type(node.props || {}), out) } catch { return out }
+  }
+  if (typeof node.type === 'string') out.push(node.type)
+  if (node.props && node.props.children !== undefined) collectTypes(node.props.children, out)
+  return out
+}
+
 // ── 注册 ────────────────────────────────────────────────
 const registrations = []
 const injections = []
@@ -292,10 +304,150 @@ console.log('JSON 编辑器')
   check('已代管时说明来自 .mcp.json', managed.some((t) => t.includes('本插件只读')), true)
 }
 
+console.log('Prompt tab')
+{
+  const snap = {
+    ...S,
+    instructions: {
+      root: '/w',
+      cwd: '/w',
+      ccHasClaude: true,
+      items: [
+        { path: '/u/.claude/CLAUDE.md', label: '~/.claude/CLAUDE.md', scope: 'user', order: 0, readers: ['cc'], note: '用户级：CC 每个项目都读', editable: false, size: 1305, mtime: 0 },
+        { path: '/u/.dsh/AGENTS.md', label: '~/.dsh/AGENTS.md', scope: 'user', order: 1, readers: ['dsh'], note: '用户级：DSH 每条指令链的第一条', editable: false, size: 1141, mtime: 0 },
+        { path: '/w/CLAUDE.md', label: 'CLAUDE.md', scope: 'project', order: 2, readers: ['cc', 'dsh'], note: null, editable: true, size: 2048, mtime: 0 },
+        { path: '/w/AGENTS.md', label: 'AGENTS.md', scope: 'project', order: 3, readers: ['dsh'], note: 'CC 默认跳过：上层已有 CLAUDE.md 家族', editable: true, size: 512, mtime: 0 },
+      ],
+      onDemand: [{ path: '/w/pkg/CLAUDE.md', label: 'pkg/CLAUDE.md', scope: 'subdir', onDemand: true, readers: ['cc', 'dsh'], note: '按需：等有 read/write/edit 摸到这个目录才进上下文', editable: true, size: 100, mtime: 0 }],
+      budget: { bytes: 3693, maxBytes: 65536, over: false, dropped: [], truncated: null },
+    },
+  }
+  const hooks = (over = {}) => ['prompt', snap, null, null, {}, null, '', null, {}, {}, null, {}, {}, EXPAND_MCP, null, null, over.promptEditor ?? null, over.promptPreview ?? null, over.previewWidth ?? 420]
+  const out = render(hooks())
+  check('Prompt tab 标题带数量', out.some((t) => t.startsWith('Prompt ')), true)
+  check('只显示本会话会读的文件', out.includes('~/.dsh/AGENTS.md'), true)
+  check('另一个工具专用的文件不显示', out.includes('~/.claude/CLAUDE.md'), false)
+  check('并说明隐藏了几份', out.some((t) => t.includes('在这里不生效，已隐藏')), true)
+  check('reader 徽章', out.includes('DSH 读') && out.includes('CC 读'), true)
+  check('被 CC 跳过的原因写明', out.some((t) => t.includes('CC 默认跳过')), true)
+  check('用户级标只读', out.includes('只读'), true)
+  check('预算行', out.some((t) => t.includes('65536')), true)
+  check('按需分组标题', out.includes('子目录（按需加载）'), true)
+
+  const editing = render(hooks({
+    promptEditor: { path: '/w/CLAUDE.md', label: 'CLAUDE.md', text: '# hi', original: '# hi', editable: true, error: null, saving: false },
+  }))
+  check('编辑器里有保存按钮', editing.includes('保存'), true)
+  check('字数统计', editing.some((t) => t.includes('# hi') === false && t.includes(' 字')), true)
+  check('未改动时说明干净', editing.some((t) => t.includes('已改动未保存')), false)
+
+  const readOnlyEditor = render(hooks({
+    promptEditor: { path: '/u/.dsh/AGENTS.md', label: '~/.dsh/AGENTS.md', text: '# u', original: '# u', editable: false, error: null, saving: false },
+  }))
+  check('用户级打开后没有保存按钮', readOnlyEditor.includes('保存'), false)
+  check('并说明只读来源', readOnlyEditor.some((t) => t.includes('用户级 / 组织级文件')), true)
+
+  const previewMd = ['# 标题', '', '- 一条约定', '普通段落 `代码` 与 **加粗**', '', '```', 'npm test', '```'].join(String.fromCharCode(10))
+  const previewing = render(hooks({
+    promptPreview: { path: '/w/CLAUDE.md', label: 'CLAUDE.md', content: previewMd, editable: true },
+  }))
+  check('侧窗标题与统计', previewing.some((t) => t.includes('渲染预览')), true)
+  check('渲染后不再有 # 号', previewing.some((t) => t.includes('# 标题')), false)
+  check('标题文字还在', previewing.includes('标题'), true)
+  check('代码块内容原样', previewing.includes('npm test'), true)
+  check('行内码与加粗拆开渲染', previewing.includes('代码') && previewing.includes('加粗'), true)
+  check('预览里有去编辑入口', previewing.includes('去编辑'), true)
+  check('预览里有关闭', previewing.includes('关闭'), true)
+
+  const types = collectTypes(tree(hooks({ promptPreview: { path: '/w/CLAUDE.md', label: 'CLAUDE.md', content: previewMd, editable: true } })))
+  check('用了真正的 md 语义标签', ['h1', 'ul', 'li', 'pre', 'code', 'strong', 'p'].every((tag) => types.includes(tag)), true)
+
+  // 回归：缩进/制表符开头的标题曾经让渲染器原地死循环（分支和段落排除条件口径不一致，i 不前进），
+  // 表现就是点一下预览整个页面卡死。
+  const NL = String.fromCharCode(10)
+  const tricky = [
+    '   ## 缩进标题',
+    String.fromCharCode(9) + '# 制表符标题',
+    '- 项目一',
+    '| a | b |',
+    '| --- | --- |',
+    '1. 编号',
+    '> 引用',
+    '```',
+    'code-line',
+    '```',
+    '普通段落',
+  ].join(NL)
+  const trickyHooks = hooks({ promptPreview: { path: '/w/AGENTS.md', label: 'AGENTS.md', content: tricky, editable: true } })
+  const trickyText = render(trickyHooks)
+  check('缩进标题不再吞掉（死循环回归）', trickyText.includes('缩进标题'), true)
+  check('制表符标题也在', trickyText.includes('制表符标题'), true)
+  check('其余块都还在', ['项目一', '编号', '引用', 'code-line', '普通段落'].every((mark) => trickyText.includes(mark)), true)
+  const trickyTypes = collectTypes(tree(trickyHooks))
+  check('缩进标题仍按 h2 渲染', trickyTypes.includes('h2'), true)
+  check('列表/表格/引用/代码块都生成了', ['ul', 'ol', 'table', 'blockquote', 'pre'].every((tag) => trickyTypes.includes(tag)), true)
+
+  // 标题的各种写法都不能漏成 "# 文字"
+  const headingForms = [
+    '##无空格标题',
+    '## 带空格标题 ###',
+    '#######  七个井号',
+    '# 普通标题',
+  ].join(String.fromCharCode(10))
+  const headingHooks = hooks({ promptPreview: { path: '/w/AGENTS.md', label: 'AGENTS.md', content: headingForms, editable: true } })
+  const headingText = render(headingHooks)
+  check('无空格标题渲染成标题', headingText.includes('无空格标题'), true)
+  check('输出里不再留着井号', headingText.some((t) => t.includes('##无空格标题')), false)
+  check('ATX 收尾的 ### 被吃掉', headingText.some((t) => t.includes('带空格标题 ###')), false)
+  check('七个井号仍是文字（不是标题）', headingHooks && render(hooks({ promptPreview: { path: '/w/AGENTS.md', label: 'AGENTS.md', content: '#######  七个井号', editable: true } })).some((t) => t.includes('#######')), true)
+  check('所有标题都生成了 hN', collectTypes(tree(headingHooks)).filter((tag) => /^h[1-6]$/.test(tag)).length >= 2, true)
+
+  // 预览窗格：可拖宽 + 拖动条
+  const wide = tree(hooks({ previewWidth: 640, promptPreview: { path: '/w/CLAUDE.md', label: 'CLAUDE.md', content: '# x', editable: true } }))
+  const widths = collectNodesByProp(wide, 'style').map((n) => n.props.style && n.props.style.width).filter((w) => typeof w === 'number')
+  check('窗格宽度跟着可拖状态走', widths.includes(640), true)
+  check('有拖动条', collectNodesByProp(wide, 'title').some((n) => String(n.props.title).includes('拖动调整预览宽度')), true)
+
+  // 编辑器要够高（曾经是 16 行的矮框）
+  const editingTree = tree(hooks({ promptEditor: { path: '/w/CLAUDE.md', label: 'CLAUDE.md', text: '# hi', original: '# hi', editable: true, error: null, saving: false } }))
+  const rowCounts = collectNodesByProp(editingTree, 'rows').map((n) => n.props.rows)
+  check('编辑器至少 20 行高', rowCounts.some((rows) => typeof rows === 'number' && rows >= 20), true)
+
+  const readOnlyPreview = render(hooks({ promptPreview: { path: '/u/.dsh/AGENTS.md', label: '~/.dsh/AGENTS.md', content: '# u', editable: false } }))
+  check('只读文件没有去编辑', readOnlyPreview.includes('去编辑'), false)
+}
+
 console.log('工具展开')
 const t4 = render(mcpHooks({ expanded: { exa: true } }))
 check('展开出现工具名', t4.includes('search'), true)
 check('已关闭说明', t4.some((t) => t.includes('已从模型工具列表移除')), true)
+
+console.log('左侧导航：拖动 / 收起')
+{
+  const hooksWithLeft = (over = {}) => ['skills', S, null, null, {}, null, '', null, {}, {}, null, {}, {}, {}, null, null, null, null, null, over.leftWidth ?? 216, over.leftCollapsed ?? false]
+
+  const base = render(hooksWithLeft())
+  check('列表默认显示工作区', base.includes('D:/Work/demo'), true)
+  check('有拖动条', (() => {
+    const nodes = collectNodesByProp(tree(hooksWithLeft()), 'title')
+    return nodes.some((n) => String(n.props.title).includes('拖动调整列表宽度'))
+  })(), true)
+
+  const wide = tree(hooksWithLeft({ leftWidth: 320 }))
+  const widths = collectNodesByProp(wide, 'style').map((n) => n.props.style && n.props.style.width).filter((w) => typeof w === 'number')
+  check('宽度跟着可拖状态走', widths.includes(320), true)
+
+  const collapsed = render(hooksWithLeft({ leftCollapsed: true }))
+  check('收起后工作区列表不显示', collapsed.includes('D:/Work/demo'), false)
+  check('收起后出现展开图标', (() => {
+    const nodes = collectNodesByProp(tree(hooksWithLeft({ leftCollapsed: true })), 'title')
+    return nodes.some((n) => String(n.props.title).includes('展开左侧列表'))
+  })(), true)
+
+  const expanded = tree(hooksWithLeft())
+  check('展开态图标是「收起」', collectNodesByProp(expanded, 'title').some((n) => String(n.props.title).includes('收起左侧列表')), true)
+  check('图标是 svg 折角', collectNodesByProp(expanded, 'viewBox').length > 0, true)
+}
 
 console.log('加载中 / 错误')
 check('加载态', render(['skills', null, null, null, {}, null, '', null]).includes('加载中…'), true)

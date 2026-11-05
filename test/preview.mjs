@@ -138,6 +138,21 @@ const snapshot = {
       { name: 'xiaohongshu-mcp', state: 'off', connected: false, layer: 'project', tools: [] },
     ],
   },
+  instructions: {
+    root: 'D:/ds/plugins',
+    cwd: 'D:/ds/plugins',
+    ccHasClaude: false,
+    items: [
+      { path: 'C:/Users/<user>/.claude/CLAUDE.md', label: '~/.claude/CLAUDE.md', scope: 'user', order: 0, readers: ['cc'], note: '用户级：CC 每个项目都读', editable: false, size: 1305 },
+      { path: 'C:/Users/<user>/.dsh/AGENTS.md', label: '~/.dsh/AGENTS.md', scope: 'user', order: 1, readers: ['dsh'], note: '用户级：DSH 每条指令链的第一条', editable: false, size: 1141 },
+      { path: 'D:/ds/plugins/AGENTS.md', label: 'AGENTS.md', scope: 'project', order: 2, readers: ['dsh', 'cc'], note: null, editable: true, size: 2410 },
+      { path: 'D:/ds/plugins/CLAUDE.local.md', label: 'CLAUDE.local.md', scope: 'project', order: 3, readers: ['cc', 'dsh'], note: '本地 overlay：同目录内排最后', editable: true, size: 320 },
+    ],
+    onDemand: [
+      { path: 'D:/ds/plugins/skills/CLAUDE.md', label: 'skills/CLAUDE.md', scope: 'subdir', onDemand: true, readers: ['cc', 'dsh'], note: '按需：等有 read/write/edit 摸到这个目录才进上下文', editable: true, size: 180 },
+    ],
+    budget: { bytes: 3551, maxBytes: 65536, over: false, dropped: [], truncated: null },
+  },
   files: [
     { file: 'C:/Users/<user>/.dsh/skill-mcp-gate/settings.json', exists: true },
     { file: 'D:/Work/demo/.dsh/skill-mcp-gate.json', exists: false },
@@ -182,4 +197,28 @@ const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 console.log('生成预览：')
 shoot('preview-skills', ['skills', snapshot, null, null, {}, null, '', null])
 shoot('preview-mcp', ['mcps', snapshot, null, null, { exa: true }, null, '', null])
+const promptSample = [
+  '# Prompt 一览',
+  '',
+  '这份文件**整篇**进上下文，改一个字都影响行为。',
+  '',
+  '##顺序（无空格也认）',
+  '1. `$DSH_HOME/AGENTS.md`',
+  '2. 项目根 → cwd 逐目录',
+  '',
+  '- 先宽泛、后具体',
+  '- 本地 overlay 排最后',
+  '',
+  '> 两边都是拼接，不覆盖。',
+  '',
+  '| 宿主 | 预算 |',
+  '| --- | --- |',
+  '| DSH | 64 KiB |',
+  '| CC | 无硬预算 |',
+  '',
+  '```',
+  'npm test',
+  '```',
+].join(String.fromCharCode(10))
+shoot('preview-prompt', ['prompt', snapshot, null, null, {}, null, '', null, {}, {}, null, {}, {}, {}, null, null, null, { path: 'D:/ds/plugins/AGENTS.md', label: 'AGENTS.md', content: promptSample, editable: true }])
 console.log(`输出目录：${outDir}`)
