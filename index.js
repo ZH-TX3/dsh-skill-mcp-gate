@@ -319,7 +319,59 @@ export function apply(ctx, config = {}) {
   }
 
   function ccDefinitionOf(serverName) {
-    return current?.claudeMcp?.servers.find((item) => item.name === serverName)?.definition
+    return current?.ccDefinitions?.get(serverName)
+  }
+
+  /**
+   * 把 Claude Code 里的连接定义复制进本插件配置，接管这台连接。
+   *
+   * 为什么需要：CC 的定义本插件**只读** —— 面板能看见名字，但没有连接定义，
+   * 于是「读得到、用不了」。复制一份进自己的配置后它才可连、可延迟、可 `off` 真断开。
+   * 写入位置跟调用方作用域走（面板在全局就写全局，在项目就写项目）。
+   */
+  async function adoptClaudeServers(serverNames, workspaceKey) {
+    const list = (Array.isArray(serverNames) ? serverNames : [serverNames])
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item) => item.length > 0)
+    if (list.length === 0) throw new Error('没有指定要复制的服务器')
+    // 判断「有没有定义」必须看调用方那个作用域，不能看上一次 reload 停在哪儿
+    if (workspaceKey && workspaceKey !== current?.workspace) reload(workspaceKey)
+
+    const target = definitionTarget(workspaceKey)
+    const copied = []
+    const skipped = []
+    for (const serverName of list) {
+      if (current?.definitions?.has(serverName)) {
+        skipped.push({ name: serverName, reason: '本插件已经有一份定义，不用再复制' })
+        continue
+      }
+      const definition = ccDefinitionOf(serverName)
+      if (!definition) {
+        skipped.push({ name: serverName, reason: 'Claude Code 里没有这台服务器的连接定义' })
+        continue
+      }
+      try {
+        const config = normalizeDefinition({ ...templateFromCc(serverName, definition), serverName })
+        setDefinition(target.file, config.serverName, config)
+        copied.push(config.serverName)
+      } catch (error) {
+        skipped.push({ name: serverName, reason: error.message })
+      }
+    }
+
+    if (copied.length === 0) {
+      return { copied, skipped, connected: [], file: target.file, workspace: target.ws }
+    }
+    reload(target.ws)
+    await syncConnections()
+    const active = new Set(connections.status().active)
+    return {
+      copied,
+      skipped,
+      connected: copied.filter((name) => active.has(name)),
+      file: target.file,
+      workspace: target.ws,
+    }
   }
 
   /**
@@ -478,12 +530,13 @@ export function apply(ctx, config = {}) {
     setSkill,
     setServer,
     setTool,
+    adoptServers: adoptClaudeServers,
   })
 
   ctx.commands.register({
     name: 'gate',
     description: '查看并调整 skill / MCP 的可见性（skill-mcp-gate）',
-    input: { hint: 'status | skills | mcp | why <name> | doctor | reload [dir] | set <key>=<value>' },
+    input: { hint: 'status | skills | mcp | why <name> | copy <name> | doctor | reload [dir] | set <key>=<value>' },
     recordInput: false,
     handler: (invocation) => commands.handle(invocation.rawInput),
   })
@@ -500,6 +553,7 @@ export function apply(ctx, config = {}) {
     setServer,
     setTool,
     addServers,
+    adoptServers: adoptClaudeServers,
     removeServer: (name, ws) => removeServerEntry(name, ws),
     renameServer: (from, to, ws) => renameServerEntry(from, to, ws),
     probeServer,
