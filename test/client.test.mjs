@@ -255,25 +255,34 @@ check('项目层 tag', t3.includes('项目'), true)
 check('未声明 tag', t3.includes('未声明'), true)
 check('CC 本地 tag', t3.includes('CC 本地'), true)
 check('CC 项目 tag（layer=cc 时不重复标全局/项目）', t3.includes('CC 项目'), true)
-check('延迟按钮在（可切成本策略）', t3.includes('延迟中'), true)
+check('延迟按钮在（可切成本策略，收在 ⋯ 里）', render(mcpHooks({ actionsOpen: { 'lazy-srv': true } })).some((t) => t.includes('延迟中')), true)
 check('CC 未批准 pill', t3.includes('CC 未批准'), true)
 check('CC 已拒绝 pill', t3.includes('CC 已拒绝'), true)
 
 console.log('条目操作区')
 {
-  const opened = render(mcpHooks({ expanded: { exa: true }, actionsOpen: { exa: true } }))
-  check('展开后出现重命名', opened.includes('重命名'), true)
-  check('展开后出现删除', opened.includes('删除'), true)
-  check('展开后出现测试连通', opened.includes('测试连通'), true)
+  const opened = render(mcpHooks({ actionsOpen: { exa: true } }))
+  check('⋯ 里有重命名', opened.includes('重命名'), true)
+  check('⋯ 里有测试连通', opened.includes('测试连通'), true)
+  check('⋯ 里有延迟加载', opened.includes('延迟加载'), true)
   const closed = render(mcpHooks())
-  check('默认收起', closed.includes('重命名'), false)
+  check('收起时没有重命名', closed.includes('重命名'), false)
+  check('收起时没有延迟加载', closed.includes('延迟加载'), false)
+  check('编辑与删除常驻行上（不折叠）', closed.includes('编辑') && closed.includes('删除'), true)
+}
+
+{
+  const ccActions = render(mcpHooks({ actionsOpen: { 'cc-only': true } }))
+  check('只声明在 CC 里的行给出「复制到 DSH」', ccActions.includes('复制到 DSH'), true)
+  const ccGroup = render(mcpHooks({ collapsedMcp: { cc: false } }))
+  check('CC 组展开后有「全部复制到 DSH」', ccGroup.includes('全部复制到 DSH'), true)
 }
 
 console.log('JSON 编辑器')
 {
   const editorState = { server: 'exa', text: JSON.stringify({ serverName: 'exa' }, null, 2), source: 'claude-code', managed: false, error: null }
   const out = render(mcpHooks({ expanded: { exa: true }, actionsOpen: { exa: true }, editor: editorState }))
-  check('出现编辑 JSON 按钮', out.includes('编辑 JSON'), true)
+  check('行上直接有编辑按钮', out.includes('编辑'), true)
   check('出现保存按钮', out.includes('保存并热加载'), true)
   check('出现恢复按钮', out.includes('恢复为 CC 定义'), true)
   check('删除按钮统一在动作行里（编辑器里不再重复一个）', out.includes('删除 DSH 连接'), false)

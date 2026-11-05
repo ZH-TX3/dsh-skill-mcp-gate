@@ -10,7 +10,7 @@
 | **skill** | 四档状态（`on` / `name-only` / `user-invocable-only` / `off`）；按选中工作区的 cwd 列目录，**能看到该工作区自己的项目级 skill** | `off` / `user-invocable-only` 在 `agent/pre-step` **重写官方 skill 目录消息**并在调用期用 `guard` 拦住；`name-only` 只留名字、不带描述。**不修改 `SKILL.md`** |
 | **MCP 服务器** | `on` / `deferred` / `off` | `off` 让工具消失且不可调用；**`deferred` 让工具不进提示词，但可被 `gate_mcp_search` 搜到、`gate_mcp_call` 调用**。两者都不断连、不写 profile 配置 |
 | **目录预算** | 原子 CC 语义：名字全留，超预算时按「最不常用」丢描述；来源 env `SLASH_COMMAND_TOOL_CHAR_BUDGET` 或 `skillListingBudgetFraction` × `contextWindowTokens` |
-| **CC 的 MCP 定义** | 只读 `~/.claude.json` / `<工作区>/.mcp.json` + 批准状态 | CC 里声明过的服务器即使 DSH 还没连也列出来（标 `CC 用户` / `CC 本地` / `CC 项目`）；**CC 里拒绝的连接默认 `off`** |
+| **CC 的 MCP 定义** | 只读 `~/.claude.json` / `<工作区>/.mcp.json` + 批准状态 | CC 里声明过的服务器即使 DSH 还没连也列出来（标 `CC 用户` / `CC 本地` / `CC 项目`）；**CC 里拒绝的连接默认 `off`**。只声明在 CC 里的服务器「读得到、连不上」—— 点 **复制到 DSH** 把定义（含 `env`）搬进本插件配置后才接管连接 |
 | **MCP 单个工具** | `on` / `off` | 同上，粒度到 `mcp__<服务器>__<工具>`（延迟状态只在服务器级，逐工具写 `deferred` 会被拒绝） |
 | **MCP 中间层** | 自动注册 `gate_mcp_search` / `gate_mcp_call` | 没有任何延迟服务器时，这两个工具自己也会从装配里摘掉，不占工具位 |
 
@@ -21,7 +21,7 @@
   另外两组折叠（标题带数量与来源说明），点击标题才展开；每行一个四档下拉
 - **MCP tab**：按声明来源分四组 —— **本项目 MCP / 全局 MCP / 仅 Claude Code 声明 / 仅运行期发现**。
   只有本项目那组默认展开，其余折叠（标题带数量与来源说明），点击标题才展开；
-  服务器一个三档控件（开关 + 延迟）、逐工具开关，`⋯` 里是重命名 / 删除 / 编辑 JSON / 测试连通
+  行上直接放 `编辑` / `删除` / `⋯` / 开关；三档里的「延迟」和复制到 DSH、重命名、测试连通收在 `⋯` 里；逐工具开关展开服务器后可见
 - 顶部有 tab 计数、名称筛选框、刷新按钮；底部有汇总与 lost / 需 A 模式 / 配置警告提示
 
 > v0.4.0 起从「设置内一页」改为左侧一级面板，与 `dsh-context` 同级。
@@ -36,7 +36,7 @@
 | **连接定义**（transport / command / args / env / url / headers） | **本插件配置** `mcp.definitions`（项目 → `<ws>/.dsh/skill-mcp-gate.json`，全局 → `~/.dsh/skill-mcp-gate/settings.json`） | 本插件启动/切工作区时灌进 loader |
 | Claude Code 的 `~/.claude.json`、`<ws>/.mcp.json` | **只读**：读来用，绝不改写 | 本插件读它来发现服务器/定义 |
 | **探测结果** | 不存盘 | — |
-| **CC 的定义** | `~/.claude.json` / `<ws>/.mcp.json` | 只读，用来当编辑器初稿 |
+| **CC 的定义** | `~/.claude.json` / `<ws>/.mcp.json` | 只读：当编辑器初稿，以及「复制到 DSH」的来源 |
 | **探测结果** | 不存盘、不缓存 | — |
 
 也就是说：**我们只写自己的 `skill-mcp-gate.json`**，Claude Code 的文件（`~/.claude.json`、
@@ -64,6 +64,21 @@
 
 **只允许改本插件自己写的条目**。`layer` 是 `cc` 的条目（只存在于 Claude Code 的定义里）两个按钮都是禁用态，
 并说明理由：那是 CC 的文件，本插件不写；要停用它请把状态设为 `off`。
+
+### 只声明在 Claude Code 里的服务器
+
+`~/.claude.json` 的 `mcpServers`（用户级）和 `projects[<cwd>].mcpServers`（本地级）本插件只读。
+所以这些服务器默认是**看得见、连不上**：面板上有名字、有作用域 tag，但没有连接定义 ——
+「延迟」按钮是灰的，开关只是把不存在的工具从装配里摘掉。
+
+要真正用起来，点行内 `⋯` 里的 **复制到 DSH**（或 CC 分组标题下的 **全部复制到 DSH**）：
+本插件读一次 CC 的定义（`command` / `args` / `env` / `url` / `headers`），归一化后写进**自己**的
+配置文件，然后立刻建连接。之后这台就和其他服务器一样：能连、能 `deferred`、`off` 是真断开、
+能改名能删。**CC 的文件一个字节都不动**。
+
+- 写进哪个作用域跟面板当前作用域走：全局视图 → 全局配置；项目视图 → 该项目配置
+- 幂等：已经有一份定义就跳过，不会覆盖你手改过的
+- 名字带点或超过 32 位（DSH 工具名 `mcp__<服务器>__<工具>` 的限制）会被拒绝并说明原因
 
 ### 「自定义填入」认四种输入
 
@@ -370,7 +385,7 @@ cd ~/.dsh/plugins/dsh-skill-mcp-gate
 npm test
 ```
 
-二十一个套件，零依赖，不启动 DSH：
+二十二个套件，零依赖，不启动 DSH：
 
 | 测试 | 覆盖 |
 |---|---|
@@ -389,6 +404,7 @@ npm test
 | `middle-layer.test.mjs` | 端到端（假 ctx）：装配过滤 → 索引 → 搜索 → 调用 → 嵌套派发；改名/删除/探测/定义编辑/粘贴解析 |
 | `global-scope.test.mjs` | **全局作用域**的完整 CRUD（之前只测了项目作用域，全局删不掉就是这么漏的） |
 | `scope-matrix.test.mjs` | **声明来源 × 操作**矩阵：7 种来源各自验 列表/归属/探测/开关/删除；外加「作用域不串味」 |
+| `adopt.test.mjs` | **复制到 DSH**：env 带过去、归属层改成接管方、幂等、非法名字拒绝、复制后 `off` 真断开、两个作用域 + `/gate copy` |
 | `scope.test.mjs` | 工作区作用域列表与写层选择 |
 | `wiring.test.mjs` | 假 ctx：真跑一次 `system-prompt/assemble` waterfall 验证过滤；命令面 + 路由 + token 鉴权 + 落盘 |
 | `client.test.mjs` | 假 react 执行 client.js 并直接渲染面板，断言 tab 名、分组标题、行文案真的出现在渲染树里 |

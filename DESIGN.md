@@ -1737,3 +1737,38 @@ v0.15.4 的全局删不掉，根因是 `const files = []` 遮蔽了外层的 `fi
 
 `npm test` 21 套件 738 项全绿；新增「作用域不串味」两组断言：
 当前视图停在项目、在全局添加 → 只写全局配置；反过来同理。
+
+## 39. v0.16.1 — 只声明在 CC 里的 MCP：复制过来才用得上
+
+### 39.1 症状
+
+`~/.claude.json` 里声明过的服务器，面板列得出来、能看作用域、能关，但**永远连不上**：
+没有工具、`延迟` 按钮灰着、开关只是把不存在的工具从装配里摘掉。
+
+### 39.2 根因
+
+连接定义的来源只有两处：项目里的 `<ws>/.mcp.json` 和本插件自己的 `mcp.definitions`。
+CC 的 `~/.claude.json` 只被读成「名字 + 批准状态」的基线层，`definitionOf()` 连 `env` 都没采
+（`context7` 的 `CONTEXT7_API_KEY` 就在 env 里）。于是这些行 `hasDefinition=false` ——
+DSH 根本没有东西可连。
+
+### 39.3 做法
+
+- `cc/mcp.js`：`definitionOf()` 采 `env`（只留字符串值，数字之类丢掉）。它有第二用途了：复制时要用。
+- `load.js`：多出一份 `ccDefinitions`（完整定义，含 env）；**面板快照里把 `env` 抹掉**
+  （它每几秒轮询一次，不该把 token 一起发出去）。
+- `adoptClaudeServers(names, workspaceKey)`：CC 定义 → `templateFromCc` → `normalizeDefinition`
+  → 写本插件配置 → reload → `syncConnections()`。幂等：已有定义就跳过，不覆盖手改过的。
+- 三个入口同一套逻辑：`POST /api/skill-mcp-gate/mcp/adopt`、`/gate copy <名字>`、
+  面板行内「复制到 DSH」与 CC 组的「全部复制到 DSH」。
+- **归属层修正**：`definitions` 里 `source === 'plugin'` 的条目，归属层跟着定义所在的作用域走。
+  不改这条的话，复制完 `hasDefinition=true` 了，`layer` 还是 `cc` —— 行赖在「仅 CC 声明」组，
+  改名 / 删除 / 延迟全被锁着，看起来像「复制了但没接管」。
+
+### 39.4 边界
+
+- 写哪个作用域跟调用方走：面板在全局就写全局配置，在项目就写项目配置（和别的动作一致）。
+- CC 的文件一个字节都不动。复制是「读它一份、写自己一份」，之后两边各自独立。
+- 名字带点或超过 32 位的（DSH 工具名 `mcp__<server>__<tool>` 的限制）会被拒绝并说清原因，
+  不静默改名。
+- 复制后 `off` 才是真的断开 —— 因为这时候 DSH 里确实有连接可断。
