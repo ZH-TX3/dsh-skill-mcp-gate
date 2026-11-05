@@ -36,8 +36,8 @@ import { createSnapshotter } from './lib/host/snapshot.js'
 import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
 import {
-  addServerNames, readJsonFile, removeDefinition, removeServer, renameServer, setDefinition,
-  setServerState, setServerStateOn, setSkillState, setToolState,
+  addServerNames, readJsonFile, readTextFile, removeDefinition, removeServer, renameServer, setDefinition,
+  setServerState, setServerStateOn, setSkillState, setToolState, writeTextFile,
 } from './lib/io.js'
 
 export const name = 'skill-mcp-gate'
@@ -487,6 +487,50 @@ export function apply(ctx, config = {}) {
     return result
   }
 
+  // ── 提示词文件（CLAUDE.md / AGENTS.md 一族）────────────────────
+  /** 单份提示词文件的大小上限：再大就不是给人读的约定了。 */
+  const MAX_INSTRUCTION_BYTES = 512 * 1024
+
+  /** 在「当前作用域认识的清单」里找这份文件；找不到就不许读写。 */
+  function instructionFileOf(file) {
+    if (typeof file !== 'string' || file.length === 0) throw new Error('缺少文件路径')
+    const wanted = resolve(file).toLowerCase()
+    const all = [
+      ...(current?.instructions?.items ?? []),
+      ...(current?.instructions?.onDemand ?? []),
+      ...(current?.instructions?.missing ?? []),
+    ]
+    const found = all.find((item) => resolve(item.path).toLowerCase() === wanted)
+    if (!found) throw new Error('这个文件不在当前作用域的提示词清单里（刷新面板再看看）')
+    return found
+  }
+
+  /** 读正文：面板上「看」和「改」都先走这里。 */
+  function readInstruction(file) {
+    const item = instructionFileOf(file)
+    if (item.size > MAX_INSTRUCTION_BYTES) {
+      throw new Error(`文件太大（${Math.round(item.size / 1024)} KB，上限 ${MAX_INSTRUCTION_BYTES / 1024} KB），不在面板里编辑`)
+    }
+    return { ...item, content: readTextFile(item.path) }
+  }
+
+  /**
+   * 存正文。只允许改**项目内**的文件（用户级的 ~/.claude、~/.dsh 只读），
+   * 而且必须是清单里认得的路径 —— 面板不能变成任意文件写入器。
+   */
+  function saveInstruction(file, text) {
+    if (typeof text !== 'string') throw new Error('内容必须是字符串')
+    const item = instructionFileOf(file)
+    if (!item.editable) {
+      throw new Error(`${item.label} 是用户级/组织级文件，本插件只读；要改用 ~/.claude 或 ~/.dsh 里的编辑器`)
+    }
+    const bytes = Buffer.byteLength(text, 'utf8')
+    if (bytes > MAX_INSTRUCTION_BYTES) throw new Error(`内容太大（${Math.round(bytes / 1024)} KB），拒绝写入`)
+    writeTextFile(item.path, text)
+    reload(current.workspace)
+    return { file: item.path, label: item.label, bytes }
+  }
+
   /** 稳定的会话上下文：注入要落到某个 agent 上。 */
   function sessionAgent() {
     return liveAgents(ctx, warn)[0]
@@ -562,6 +606,8 @@ export function apply(ctx, config = {}) {
     deleteDefinition,
     readSkillContent,
     invokeSkill,
+    readInstruction,
+    saveInstruction,
   })
   const routeDisposers = routes.map((route) => ctx.webServer.register(route))
 
