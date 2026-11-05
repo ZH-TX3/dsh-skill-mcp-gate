@@ -1696,3 +1696,44 @@ const candidates = [ files.globalFile, ... ]   // ← 想取 configPaths() 的�
 - 单测：`node test/global-scope.test.mjs` 全绿；`npm test` 20 套件 628 项全绿
 - 真实实例（3099）：全局添加 `tmp2` → 全局文件出现 `servers.tmp2` + `definitions.tmp2`；
   删除 → `configRemoved=2`、`servers` 整块消失、`definitions` 只剩他原有的 `test`
+
+## 38. v0.16.0 — 矩阵测试：一次把「作用域 × 来源 × 操作」铺开
+
+### 38.1 为什么
+
+v0.15.4 的全局删不掉，根因是 `const files = []` 遮蔽了外层的 `files`。但真正让它溜过去的是
+**测试只覆盖了项目作用域**：同一个功能有两个作用域，只测一个，等于测了个空。
+
+这次按「声明来源」划线，一次把交叉面铺开：`test/scope-matrix.test.mjs`。
+
+### 38.2 矩阵
+
+| 声明来源 | 期望 layer | hasDefinition | 删除语义 |
+|---|---|---|---|
+| 本插件全局配置 | `global` | 有 | 删定义 + 门禁 |
+| 本插件项目配置 | `project` | 有 | 删定义 + 门禁 |
+| 只有名字（无定义） | `global`/`project` | 无 | 删门禁即可消失 |
+| `~/.claude.json` mcpServers（user） | `cc` | 无 | 拒绝：那是 CC 的声明 |
+| `~/.claude.json` projects[cwd]（local） | `cc` | 无 | 同上 |
+| `<ws>/.mcp.json`（只读） | `project` | 有 | 退化成停用，不改文件 |
+
+每个来源都跑：**列表/归属/有无定义 → 探测模式 → 关→开（不换组、连接真断真连）→ 删除**。
+
+### 38.3 这个测试当场抓出的三个 bug
+
+1. **`hasDefinition` 算早了**：它在「给只有定义的服务器补门禁行」之前算，补出来的条目漏标 →
+   面板以为没有连接定义，「延迟」按钮永远灰着。
+2. **`removeServer` / `renameServer` 不接受作用域**：面板在全局视图点删除，实际作用在上一次
+   reload 的工作区上（`current` 还停在别处）→ 找不到目标、删不掉。现在两个动作都接受 `ws`
+   并先按它 reload。
+3. **`writeDefinition` 忽略调用方的作用域**：`/mcp/add` 带 `ws=global`，但 `definitionTarget()`
+   用的是 `current.workspace` → 定义被写进了**另一个工作区**的项目配置（实测在 iphone 的配置里
+   发现了本该属于全局的定义）。
+
+外加两个小的：`setServerState` / `setServerStateOn` 对字符串做对象展开，产生 `{"0":"o","1":"f"…}`
+这种垃圾键；以及「只有名字」的条目点打开时被当成「清除覆盖」，整行消失 —— 现在会显式落 `on`。
+
+### 38.4 验证
+
+`npm test` 21 套件 738 项全绿；新增「作用域不串味」两组断言：
+当前视图停在项目、在全局添加 → 只写全局配置；反过来同理。

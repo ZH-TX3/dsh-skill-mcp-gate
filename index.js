@@ -37,7 +37,7 @@ import { createCommands } from './lib/host/commands.js'
 import { createRoutes } from './lib/host/routes.js'
 import {
   addServerNames, readJsonFile, removeDefinition, removeServer, renameServer, setDefinition,
-  setServerState, setSkillState, setToolState,
+  setServerState, setServerStateOn, setSkillState, setToolState,
 } from './lib/io.js'
 
 export const name = 'skill-mcp-gate'
@@ -174,7 +174,14 @@ export function apply(ctx, config = {}) {
     if (typeof server !== 'string' || server.length === 0) throw new Error('缺少服务器名')
     assertMcpState(nextState, `mcp.${server}`)
     const { ws, file } = writeTarget(workspaceKey)
-    setServerState(file, server, nextState)
+    const owned = Boolean(current?.definitions?.has(server))
+    const declaredByCc = current?.servers.get(server)?.layer === 'cc'
+    if (nextState === 'on' && !owned && !declaredByCc) {
+      // 只有名字、没有定义、CC 里也没有：写 on 而不是「清除覆盖」，否则这行会消失
+      setServerStateOn(file, server)
+    } else {
+      setServerState(file, server, nextState)
+    }
     reload(ws)
     // off → 断开；on/deferred → 重新接上
     await syncConnections()
@@ -196,7 +203,7 @@ export function apply(ctx, config = {}) {
     const parsed = parseServerInput(text)
     const { ws, file } = writeTarget(workspaceKey)
     addServerNames(file, parsed.names)
-    for (const item of parsed.definitions) writeDefinition(item.config, item.name)
+    for (const item of parsed.definitions) writeDefinition(item.config, item.name, workspaceKey)
     reload(ws)
 
     const connected = []
@@ -235,7 +242,8 @@ export function apply(ctx, config = {}) {
    * 删除 = 删掉这台服务器在**本插件里的一切**：门禁条目 + 连接定义 + 运行期连接。
    * 只删一半会「点了没反应」：定义还在，load 时又会把它补回列表。
    */
-  async function removeServerEntry(serverName) {
+  async function removeServerEntry(serverName, workspaceKey) {
+    if (workspaceKey && workspaceKey !== current?.workspace) reload(workspaceKey)
     const { entry, owned, cc } = footprintOf(serverName)
     if (!entry && !owned) {
       throw new Error(cc
@@ -268,7 +276,8 @@ export function apply(ctx, config = {}) {
   }
 
   /** 改名要同时改门禁条目名、定义里的 serverName、以及运行期连接。 */
-  async function renameServerEntry(from, to) {
+  async function renameServerEntry(from, to, workspaceKey) {
+    if (workspaceKey && workspaceKey !== current?.workspace) reload(workspaceKey)
     if (typeof to !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(to)) {
       throw new Error(`"${to}" 不是合法的名字：只能用字母、数字、下划线、点、短横线，最长 64 位`)
     }
@@ -319,8 +328,10 @@ export function apply(ctx, config = {}) {
    *
    * `<ws>/.mcp.json` 是 **Claude Code 的项目配置，只读**：读来用，绝不改写。
    */
-  function definitionTarget() {
-    const target = writeTarget()
+  function definitionTarget(workspaceKey) {
+    // 必须跟着调用方的作用域走：面板在「全局」时保存，写的就是全局配置，
+    // 不能因为 current.workspace 还停在别的工作区就把定义写到那儿去。
+    const target = writeTarget(workspaceKey)
     return { ws: target.ws, file: target.file, kind: 'plugin' }
   }
 
@@ -347,8 +358,8 @@ export function apply(ctx, config = {}) {
    *   全局 → 本插件全局配置
    * @param previousName 改名前的名字；给了就从旧名字位置清掉
    */
-  function writeDefinition(config, previousName) {
-    const target = definitionTarget()
+  function writeDefinition(config, previousName, workspaceKey) {
+    const target = definitionTarget(workspaceKey)
     if (previousName && previousName !== config.serverName) removeDefinition(target.file, previousName)
     setDefinition(target.file, config.serverName, config)
     return target
@@ -376,7 +387,7 @@ export function apply(ctx, config = {}) {
   }
 
   /** 保存 JSON → 校验 → 写本插件配置 → 立刻热加载。 */
-  async function saveDefinition(serverName, json) {
+  async function saveDefinition(serverName, json, workspaceKey) {
     let parsed
     if (typeof json === 'string') {
       try {
@@ -388,13 +399,14 @@ export function apply(ctx, config = {}) {
       parsed = json
     }
     const config = normalizeDefinition({ ...parsed, serverName: parsed?.serverName ?? serverName })
-    const target = writeDefinition(config, serverName)
+    const target = writeDefinition(config, serverName, workspaceKey)
     reload(target.ws)
     const result = await connections.upsert(config)
     return { ...result, config, file: target.file, workspace: target.ws, kind: target.kind }
   }
 
-  async function deleteDefinition(serverName) {
+  async function deleteDefinition(serverName, workspaceKey) {
+    if (workspaceKey && workspaceKey !== current?.workspace) reload(workspaceKey)
     const owned = current?.definitions?.get(serverName)
     if (!owned) throw new Error(`本插件里没有 "${serverName}" 的连接定义`)
     if (owned.source === 'mcp.json') {
@@ -488,8 +500,8 @@ export function apply(ctx, config = {}) {
     setServer,
     setTool,
     addServers,
-    removeServer: removeServerEntry,
-    renameServer: renameServerEntry,
+    removeServer: (name, ws) => removeServerEntry(name, ws),
+    renameServer: (from, to, ws) => renameServerEntry(from, to, ws),
     probeServer,
     getDefinition,
     saveDefinition,
