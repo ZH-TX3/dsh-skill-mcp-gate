@@ -370,7 +370,7 @@ cd ~/.dsh/plugins/dsh-skill-mcp-gate
 npm test
 ```
 
-十七个套件，零依赖，不启动 DSH：
+二十一个套件，零依赖，不启动 DSH：
 
 | 测试 | 覆盖 |
 |---|---|
@@ -387,6 +387,8 @@ npm test
 | `probe.test.mjs` | 探测：三种模式的计划、`${VAR}` 展开、本地 http 端点（含 405/拒连/超时）、PATH 查找 |
 | `skill-invoke.test.mjs` | 手动调用：外壳形状、读正文、排队注入、只注入一次、拒绝路径 |
 | `middle-layer.test.mjs` | 端到端（假 ctx）：装配过滤 → 索引 → 搜索 → 调用 → 嵌套派发；改名/删除/探测/定义编辑/粘贴解析 |
+| `global-scope.test.mjs` | **全局作用域**的完整 CRUD（之前只测了项目作用域，全局删不掉就是这么漏的） |
+| `scope-matrix.test.mjs` | **声明来源 × 操作**矩阵：7 种来源各自验 列表/归属/探测/开关/删除；外加「作用域不串味」 |
 | `scope.test.mjs` | 工作区作用域列表与写层选择 |
 | `wiring.test.mjs` | 假 ctx：真跑一次 `system-prompt/assemble` waterfall 验证过滤；命令面 + 路由 + token 鉴权 + 落盘 |
 | `client.test.mjs` | 假 react 执行 client.js 并直接渲染面板，断言 tab 名、分组标题、行文案真的出现在渲染树里 |
