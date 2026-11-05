@@ -326,15 +326,19 @@ export function apply(ctx, config = {}) {
 
   /** 从所有可能的定义来源里删掉一条（.mcp.json + 本插件全局/项目配置）。 */
   function dropDefinitionEverywhere(serverName) {
-    const files = []
+    // 注意：别用 `files` 当局部变量 —— 外层 `files` 是 configPaths() 的结果，
+    // 遮蔽它会让 files.globalFile 变成 undefined，全局作用域就永远删不掉定义。
+    const removedFrom = []
     const candidates = [
       files.globalFile,
-      current?.workspace && current.workspace !== GLOBAL_WS ? configPaths({ projectDir: current.workspace }).projectFile : null,
+      current?.workspace && current.workspace !== GLOBAL_WS
+        ? configPaths({ projectDir: current.workspace }).projectFile
+        : null,
     ].filter(Boolean)
     for (const file of new Set(candidates)) {
-      if (removeDefinition(file, serverName)) files.push(file)
+      if (removeDefinition(file, serverName)) removedFrom.push(file)
     }
-    return files
+    return removedFrom
   }
 
   /**

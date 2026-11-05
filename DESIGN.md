@@ -1648,3 +1648,51 @@ iphone 工作区（定义在本插件配置里）
 ```
 
 `npm test` 19 套件 609 项全绿。
+
+## 37. v0.15.4 — 全局作用域删不掉：变量遮蔽
+
+### 37.1 现象
+
+在「全局」作用域添加 MCP，点删除后行还在（定义没删），看起来完全没反应。
+
+### 37.2 根因
+
+`dropDefinitionEverywhere()` 里写了：
+
+```js
+const files = []                       // ← 局部变量
+const candidates = [ files.globalFile, ... ]   // ← 想取 configPaths() 的结果，却取到局部数组
+```
+
+外层 `apply()` 里 `const files = configPaths(config)` 是配置文件路径表。局部 `const files = []`
+把它**遮蔽**了，于是 `files.globalFile === undefined`，候选列表在全局作用域下变成空 ——
+一个文件都没去删。
+
+项目作用域看起来正常，只是因为候选里还有 `configPaths({projectDir}).projectFile` 那条；
+全局作用域没有第二候选，于是全军覆没。
+
+### 37.3 为什么测试没抓到
+
+`middle-layer` / `store` 的增删改查全部跑在**项目作用域**（临时工作区）上，
+`files.globalFile` 那条分支从来没被执行过。这不是「测试不够多」，是**覆盖面偏了**：
+同一个功能有两个作用域，只测了一个。
+
+### 37.4 补救
+
+新增 `test/global-scope.test.mjs`，用临时 `DSH_HOME` 跑完整的全局 CRUD：
+
+| 用例 | 断言 |
+|---|---|
+| 初始 | 全局作用域能看到、layer=global、被接管、运行期已建连接 |
+| 编辑 | 写进全局配置；**不会**偷偷写项目文件 |
+| 删除 | 列表消失、连接回收、`configRemoved === 2`（门禁 + 定义）、文件里两处都干净 |
+| 自定义填入 | 定义与门禁都落全局配置，加完能删干净 |
+
+顺带把 `configRemoved` 的计数也断言了 —— 之前就算只删掉一处也会返回 `ok`，计数是唯一能暴露
+「删了一半」的信号。
+
+### 37.5 验证
+
+- 单测：`node test/global-scope.test.mjs` 全绿；`npm test` 20 套件 628 项全绿
+- 真实实例（3099）：全局添加 `tmp2` → 全局文件出现 `servers.tmp2` + `definitions.tmp2`；
+  删除 → `configRemoved=2`、`servers` 整块消失、`definitions` 只剩他原有的 `test`
