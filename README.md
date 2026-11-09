@@ -446,3 +446,16 @@ npm test
 ## 设计文档
 
 见 [DESIGN.md](./DESIGN.md)，含 API 依据、实测矩阵、里程碑与偏差记录。
+
+## 仓库与提交
+
+本仓库是 [dsh-plugins](https://github.com/ZH-TX3/dsh-plugins) 的 **submodule**。
+在这里提交只更新了插件仓库；主仓库里那个指针（gitlink）还是旧的，clone 主仓库的人拿不到新代码。
+两边一起走主仓库根上的 `sync.sh`：
+
+```bash
+cd /d/ds/dsh-plugins
+./sync.sh "feat(panel): 说明本次改了什么"
+```
+
+它会：主仓库 pull → 各子模块 pull/commit/push → 主仓库记录新指针 → push。
