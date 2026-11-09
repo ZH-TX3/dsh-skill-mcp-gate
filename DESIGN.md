@@ -1880,3 +1880,13 @@ lib/host + client          快照带清单；正文按需读；保存走 allowli
 - 踩了一次 TDZ：`leftToggle` 定义在 `const header = …` 之后，而 header 里已经用到它 →
   `ReferenceError: Cannot access 'leftToggle' before initialization`。这类"先构造子树、再拼布局"的写法里，
   任何被上层引用的常量都必须定义在它上面，不能只是因为"读起来顺"就放在后面。
+
+### 40.8 拖动条默认隐形
+
+之前两条拖动条各自画了 6px 的实色块（`background: border`），等于给面板平白加了两条竖线。
+改成：外层是 10px 的透明命中带（`col-resize`），**里面嵌一条 2px 的细线，默认 `transparent`**，
+只有 `onMouseEnter` 把 `hoverEdge` 设成自己时才把这条线染成主色（`#2f7cf6`），`onMouseLeave` 还原。
+拖动过程中也保持高亮（`mousedown` 时就点亮，`mouseup` 时清掉），否则拖到一半线就没了。
+
+命中带比细线宽是有意的：**可抓的区域**（10px）和**可见的提示**（2px）本来就该分开，
+不然要么抓不准、要么满屏竖线。两条拖动条共用 `edgeHandle()`，样式只在一个地方定义。

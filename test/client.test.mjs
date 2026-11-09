@@ -322,7 +322,7 @@ console.log('Prompt tab')
       budget: { bytes: 3693, maxBytes: 65536, over: false, dropped: [], truncated: null },
     },
   }
-  const hooks = (over = {}) => ['prompt', snap, null, null, {}, null, '', null, {}, {}, null, {}, {}, EXPAND_MCP, null, null, over.promptEditor ?? null, over.promptPreview ?? null, over.previewWidth ?? 420]
+  const hooks = (over = {}) => ['prompt', snap, null, null, {}, null, '', null, {}, {}, null, {}, {}, EXPAND_MCP, null, null, over.promptEditor ?? null, over.promptPreview ?? null, over.previewWidth ?? 420, 216, false, over.hoverEdge ?? null]
   const out = render(hooks())
   check('Prompt tab 标题带数量', out.some((t) => t.startsWith('Prompt ')), true)
   check('只显示本会话会读的文件', out.includes('~/.dsh/AGENTS.md'), true)
@@ -407,6 +407,11 @@ console.log('Prompt tab')
   const widths = collectNodesByProp(wide, 'style').map((n) => n.props.style && n.props.style.width).filter((w) => typeof w === 'number')
   check('窗格宽度跟着可拖状态走', widths.includes(640), true)
   check('有拖动条', collectNodesByProp(wide, 'title').some((n) => String(n.props.title).includes('拖动调整预览宽度')), true)
+  const previewLines = (hover) => collectNodesByProp(tree(hooks({ hoverEdge: hover, promptPreview: { path: '/w/CLAUDE.md', label: 'CLAUDE.md', content: '# x', editable: true } })), 'style')
+    .map((n) => n.props.style || {})
+    .filter((style) => style.width === 2 && style.height === "100%")
+  check('预览条默认也不画线', previewLines(null).every((style) => style.background === 'transparent'), true)
+  check('贴到预览边缘才亮，且只亮它自己', previewLines('preview').filter((style) => style.background === '#2f7cf6').length, 1)
 
   // 编辑器要够高（曾经是 16 行的矮框）
   const editingTree = tree(hooks({ promptEditor: { path: '/w/CLAUDE.md', label: 'CLAUDE.md', text: '# hi', original: '# hi', editable: true, error: null, saving: false } }))
@@ -424,7 +429,10 @@ check('已关闭说明', t4.some((t) => t.includes('已从模型工具列表移�
 
 console.log('左侧导航：拖动 / 收起')
 {
-  const hooksWithLeft = (over = {}) => ['skills', S, null, null, {}, null, '', null, {}, {}, null, {}, {}, {}, null, null, null, null, null, over.leftWidth ?? 216, over.leftCollapsed ?? false]
+  const hooksWithLeft = (over = {}) => ['skills', S, null, null, {}, null, '', null, {}, {}, null, {}, {}, {}, null, null, null, null, null, over.leftWidth ?? 216, over.leftCollapsed ?? false, over.hoverEdge ?? null]
+  const edgeLines = (over) => collectNodesByProp(tree(hooksWithLeft(over)), 'style')
+    .map((n) => n.props.style || {})
+    .filter((style) => style.width === 2 && style.height === "100%")
 
   const base = render(hooksWithLeft())
   check('列表默认显示工作区', base.includes('D:/Work/demo'), true)
@@ -443,6 +451,11 @@ console.log('左侧导航：拖动 / 收起')
     const nodes = collectNodesByProp(tree(hooksWithLeft({ leftCollapsed: true })), 'title')
     return nodes.some((n) => String(n.props.title).includes('展开左侧列表'))
   })(), true)
+
+  check('默认不画那条线（透明）', edgeLines({}).every((style) => style.background === 'transparent'), true)
+  check('指针贴上去才显出来', edgeLines({ hoverEdge: 'left' }).some((style) => style.background === '#2f7cf6'), true)
+  check('鼠标移开又藏回去', edgeLines({ hoverEdge: null }).every((style) => style.background === 'transparent'), true)
+  check('预览条没挂载时不会被点亮（只有左栏那一条）', edgeLines({ hoverEdge: 'preview' }).filter((style) => style.background === '#2f7cf6').length, 0)
 
   const expanded = tree(hooksWithLeft())
   check('展开态图标是「收起」', collectNodesByProp(expanded, 'title').some((n) => String(n.props.title).includes('收起左侧列表')), true)
